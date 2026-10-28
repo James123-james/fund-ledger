@@ -484,12 +484,12 @@ function renderFundDetail(d) {
         <div class="timing-row">
           <span>买入 ${t.buy_count} 笔</span>
           <div class="timing-track"><div class="timing-fill buy" style="width:${t.buy_avg_percentile ?? 0}%"></div></div>
-          <span class="timing-val">平均位于净值 ${t.buy_avg_percentile ?? '—'}% 分位</span>
+          <span class="timing-val">${t.buy_avg_percentile === null ? '不适用' : `平均位于净值 ${t.buy_avg_percentile}% 分位`}</span>
         </div>
         <div class="timing-row">
           <span>卖出 ${t.sell_count} 笔</span>
           <div class="timing-track"><div class="timing-fill sell" style="width:${t.sell_avg_percentile ?? 0}%"></div></div>
-          <span class="timing-val">平均位于净值 ${t.sell_avg_percentile ?? '—'}% 分位</span>
+          <span class="timing-val">${t.sell_avg_percentile === null ? '不适用' : `平均位于净值 ${t.sell_avg_percentile}% 分位`}</span>
         </div>
       </div>
       <div class="hint-box" style="margin-top:12px">
@@ -613,7 +613,9 @@ function renderFundTxns(d) {
           <td class="num" data-label="金额">${money(m.amount)}</td>
           <td class="num" data-label="份额">${num(m.shares)}</td>
           <td class="num" data-label="成交净值">${num(m.nav, 4)}</td>
-          <td class="num" data-label="净值分位"><span class="${m.percentile > 70 ? 'up' : m.percentile < 30 ? 'down' : 'flat'}">${m.percentile}%</span></td>
+          <td class="num" data-label="净值分位">${m.percentile === null || m.percentile === undefined
+            ? '<span class="flat">—</span>'
+            : `<span class="${m.percentile > 70 ? 'up' : m.percentile < 30 ? 'down' : 'flat'}">${m.percentile}%</span>`}</td>
           <td class="muted" data-label="备注" style="font-size:12px">${esc(m.note)}</td>
         </tr>`).join('')}</tbody>
     </table></div>`;

@@ -657,8 +657,13 @@ def fund_detail(conn, code, date_from=None, date_to=None):
             nav = _close_before(closes, t["date"])
         if nav is None:
             continue
-        # 该笔操作日的净值在区间内的百分位：越低说明买在相对底部
-        percentile = (nav - lo) / (hi - lo) * 100 if hi > lo else 50.0
+        # 该笔操作日的净值在区间内的百分位：越低说明买在相对底部。
+        # 货币基金净值恒为 1，区间上下限相同，算出来的分位没有意义，
+        # 与 timing 的口径保持一致，置空而不是给一个假的 50。
+        if fund["is_money"] or hi <= lo:
+            percentile = None
+        else:
+            percentile = (nav - lo) / (hi - lo) * 100
         markers.append(
             {
                 "id": t["id"],
@@ -671,7 +676,7 @@ def fund_detail(conn, code, date_from=None, date_to=None):
                 "amount": round(float(t["amount"] or 0), 2),
                 "shares": round(float(t["shares"] or 0), 4),
                 "nav": round(nav, 4),
-                "percentile": round(percentile, 1),
+                "percentile": round(percentile, 1) if percentile is not None else None,
                 "note": t.get("note") or "",
             }
         )
@@ -691,7 +696,8 @@ def fund_detail(conn, code, date_from=None, date_to=None):
     sells = [m for m in markers if m["side"] == "sell"]
 
     def _avg_percentile(items):
-        return round(sum(m["percentile"] for m in items) / len(items), 1) if items else None
+        vals = [m["percentile"] for m in items if m.get("percentile") is not None]
+        return round(sum(vals) / len(vals), 1) if vals else None
 
     # 择时质量：买入平均分位越低越好（买在低位）
     timing = {

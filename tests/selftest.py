@@ -377,6 +377,29 @@ def test_fund_detail(conn):
 
     check("择时结论存在", bool(d["timing"]["verdict"]), d["timing"]["verdict"] or "无")
 
+    # 货币基金净值恒定，分位必须为空而不是假的 50
+    conn.execute(
+        "INSERT INTO funds (code,name,category,is_money,created_at) "
+        "VALUES ('M001','测试货币','cash',1,datetime('now'))"
+    )
+    for d in (x["date"] for x in conn.execute(
+            "SELECT DISTINCT date FROM nav WHERE code = 'T001' ORDER BY date").fetchall()):
+        conn.execute(
+            "INSERT INTO nav (code,date,nav,acc_nav,pct) VALUES ('M001',?,1.0,1.0,0.0)", (d,)
+        )
+    conn.execute(
+        "INSERT INTO txns (code,date,action,amount,shares,nav,fee,note,created_at) "
+        "VALUES ('M001','2026-06-01','open',1000,1000,1.0,0,'','')"
+    )
+    conn.commit()
+    dm = analytics.fund_detail(conn, "M001")
+    check("货币基金分位为空", all(m["percentile"] is None for m in dm["markers"]),
+          str([m["percentile"] for m in dm["markers"]]))
+    check("货币基金择时均值为空",
+          dm["timing"]["buy_avg_percentile"] is None and dm["timing"]["sell_avg_percentile"] is None)
+    check("货币基金择时结论正确", "分位无意义" in (dm["timing"]["verdict"] or ""),
+          dm["timing"]["verdict"] or "无")
+
     missing = analytics.fund_detail(conn, "ZZZZ")
     check("不存在的基金报错", "error" in missing)
 
