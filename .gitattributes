@@ -1,0 +1,17 @@
+# 统一换行符，避免 Windows / macOS 协作时整文件 diff
+* text=auto eol=lf
+
+# 批处理必须是 CRLF，否则 Windows 下可能执行异常
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制，别做换行转换，也别尝试 diff
+*.db binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# 导出文件按二进制处理，避免被当成文本合并
+*.csv -text

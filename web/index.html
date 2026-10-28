@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f5f4ef">
+<title>基金台账</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <span>基金台账</span>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn ghost sm" id="btn-sync">更新净值</button>
+    <button class="btn primary sm" id="btn-new-txn">+ 记一笔</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-view="overview">总览</button>
+  <button class="tab" data-view="txns">操作流水</button>
+  <button class="tab" data-view="analysis">配置分析</button>
+  <button class="tab" data-view="export">导出</button>
+  <button class="tab" data-view="settings">设置</button>
+</nav>
+
+<main id="main">
+
+  <!-- ============ 总览 ============ -->
+  <section class="view active" id="view-overview">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">持仓市值</div>
+        <div class="stat-value" id="s-value">—</div>
+        <div class="stat-sub" id="s-value-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">累计盈亏</div>
+        <div class="stat-value" id="s-pnl">—</div>
+        <div class="stat-sub" id="s-pnl-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">当日盈亏</div>
+        <div class="stat-value" id="s-today">—</div>
+        <div class="stat-sub" id="s-today-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">已实现盈亏</div>
+        <div class="stat-value" id="s-realized">—</div>
+        <div class="stat-sub" id="s-realized-sub"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>净值走势</h2>
+        <div class="range-group" id="chart-range">
+          <button data-range="1m">1月</button>
+          <button data-range="3m">3月</button>
+          <button data-range="1y" class="active">1年</button>
+          <button data-range="all">全部</button>
+        </div>
+      </div>
+      <div id="chart" class="chart"></div>
+      <div class="legend" id="chart-legend"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>当前持仓</h2>
+        <span class="hint" id="pos-count"></span>
+      </div>
+      <div id="positions"></div>
+    </div>
+  </section>
+
+  <!-- ============ 操作流水 ============ -->
+  <section class="view" id="view-txns">
+    <div class="toolbar">
+      <div class="field inline">
+        <label>从</label>
+        <input type="date" id="txn-from">
+      </div>
+      <div class="field inline">
+        <label>到</label>
+        <input type="date" id="txn-to">
+      </div>
+      <div class="field inline">
+        <label>基金</label>
+        <select id="txn-fund"><option value="">全部</option></select>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn ghost sm" id="btn-sip">批量定投</button>
+      <button class="btn primary sm" id="btn-new-txn2">+ 记一笔</button>
+    </div>
+    <div id="txn-summary" class="inline-summary"></div>
+    <div class="panel flush">
+      <div id="txns"></div>
+    </div>
+  </section>
+
+  <!-- ============ 配置分析 ============ -->
+  <section class="view" id="view-analysis">
+    <div class="toolbar">
+      <div class="field inline grow">
+        <label>投资模板</label>
+        <select id="tpl-select"></select>
+      </div>
+      <div class="field inline">
+        <label>新增资金</label>
+        <input type="number" id="extra-cash" placeholder="0" min="0" step="1000">
+      </div>
+      <button class="btn ghost sm" id="btn-manage-tpl">管理模板</button>
+    </div>
+    <div id="tpl-desc" class="tpl-desc"></div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>配置偏离</h2><span class="hint" id="alloc-hint"></span></div>
+      <div id="alloc-bars"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>再平衡建议</h2></div>
+      <div id="rebalance"></div>
+    </div>
+  </section>
+
+  <!-- ============ 导出 ============ -->
+  <section class="view" id="view-export">
+    <div class="panel">
+      <div class="panel-head"><h2>选择范围</h2></div>
+      <div class="quick-range" id="quick-range">
+        <button data-q="1m">近 1 月</button>
+        <button data-q="3m">近 3 月</button>
+        <button data-q="ytd">今年以来</button>
+        <button data-q="1y">近 1 年</button>
+        <button data-q="all" class="active">全部</button>
+      </div>
+      <div class="row-2">
+        <div class="field"><label>开始日期</label><input type="date" id="exp-from"></div>
+        <div class="field"><label>结束日期</label><input type="date" id="exp-to"></div>
+      </div>
+
+      <div class="field">
+        <label>详略档位</label>
+        <div class="choice-group" id="level-group">
+          <label class="choice">
+            <input type="radio" name="level" value="brief">
+            <span class="choice-body">
+              <b>精简</b>
+              <em>只有概况、持仓和操作流水。适合快速复盘</em>
+            </span>
+          </label>
+          <label class="choice checked">
+            <input type="radio" name="level" value="standard" checked>
+            <span class="choice-body">
+              <b>标准 <i class="rec">推荐</i></b>
+              <em>追加组合逐月表现与各基金月度涨跌。AI 分析的最佳长度</em>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="level" value="full">
+            <span class="choice-body">
+              <b>完整</b>
+              <em>全部逐日净值与涨跌幅。数据最全，但文件很长</em>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>文件格式</label>
+        <div class="choice-group inline-choices" id="format-group">
+          <label class="choice checked">
+            <input type="radio" name="format" value="md" checked>
+            <span class="choice-body"><b>Markdown</b><em>给 AI 读，带口径说明</em></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="format" value="csv">
+            <span class="choice-body"><b>CSV</b><em>给 Excel 读，单表流水</em></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="format" value="json">
+            <span class="choice-body"><b>JSON</b><em>结构化全量，可程序处理</em></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-line">
+          <input type="checkbox" id="exp-with-tpl" checked>
+          <span>附带当前模板的配置分析</span>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="btn-export">下载文件</button>
+        <button class="btn ghost" id="btn-preview">预览内容</button>
+      </div>
+    </div>
+
+    <div class="panel" id="preview-panel" hidden>
+      <div class="panel-head">
+        <h2>预览</h2>
+        <button class="btn ghost sm" id="btn-copy">复制全文</button>
+      </div>
+      <pre id="preview-body" class="preview"></pre>
+    </div>
+  </section>
+
+  <!-- ============ 设置 ============ -->
+  <section class="view" id="view-settings">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>基金库</h2>
+        <button class="btn ghost sm" id="btn-add-fund">+ 添加基金</button>
+      </div>
+      <div id="fund-list"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>数据</h2></div>
+      <p class="muted">所有数据保存在本机的 <code>data/fund.db</code> 单文件里。备份就是复制这个文件。</p>
+      <div class="actions">
+        <a class="btn ghost" href="/api/backup">下载数据库备份</a>
+      </div>
+      <p class="muted" style="margin-top:12px;font-size:12px">
+        如需彻底重置：先关闭程序，再删除 <code>data/fund.db</code>，重新启动即恢复初始状态。
+      </p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>关于</h2></div>
+      <p class="muted">
+        净值数据来自天天基金公开接口，仅供个人复盘参考，不构成投资建议。<br>
+        成本口径：移动加权平均法；盈亏不含手续费以外的税费。
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<!-- 底部导航（手机） -->
+<nav class="bottom-nav" id="bottom-nav">
+  <button class="bn active" data-view="overview"><span>总览</span></button>
+  <button class="bn" data-view="txns"><span>流水</span></button>
+  <button class="bn" data-view="analysis"><span>配置</span></button>
+  <button class="bn" data-view="export"><span>导出</span></button>
+  <button class="bn" data-view="settings"><span>设置</span></button>
+</nav>
+
+<!-- 操作录入弹窗 -->
+<div class="modal-mask" id="modal-txn" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="txn-modal-title">记一笔</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="f-id">
+      <div class="field">
+        <label>基金</label>
+        <select id="f-code"></select>
+      </div>
+      <div class="row-2">
+        <div class="field"><label>日期</label><input type="date" id="f-date"></div>
+        <div class="field">
+          <label>操作</label>
+          <select id="f-action">
+            <option value="open">建仓</option>
+            <option value="add">加仓</option>
+            <option value="reduce">减仓</option>
+            <option value="close">清仓</option>
+            <option value="sip">定投</option>
+            <option value="dividend">分红</option>
+          </select>
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label>金额（元）</label><input type="number" id="f-amount" step="0.01" placeholder="如 1000"></div>
+        <div class="field"><label>份额</label><input type="number" id="f-shares" step="0.0001" placeholder="留空自动算"></div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label>成交净值</label><input type="number" id="f-nav" step="0.0001" placeholder="留空取当日净值"></div>
+        <div class="field"><label>手续费（元）</label><input type="number" id="f-fee" step="0.01" placeholder="0"></div>
+      </div>
+      <div class="field"><label>备注</label><input type="text" id="f-note" placeholder="为什么做这笔操作，比如「跌 3% 补仓」"></div>
+      <div class="hint-box" id="f-hint"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close>取消</button>
+      <button class="btn primary" id="btn-save-txn">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量定投弹窗 -->
+<div class="modal-mask" id="modal-sip" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2>批量生成定投</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label>基金</label><select id="sip-code"></select></div>
+      <div class="row-2">
+        <div class="field"><label>开始</label><input type="date" id="sip-start"></div>
+        <div class="field"><label>结束</label><input type="date" id="sip-end"></div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label>周期</label>
+          <select id="sip-freq">
+            <option value="month">每月</option>
+            <option value="biweek">每两周</option>
+            <option value="week">每周</option>
+          </select>
+        </div>
+        <div class="field" id="sip-day-wrap"><label>扣款日</label><input type="number" id="sip-day" min="1" max="31" value="15"></div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label>每期金额（元）</label><input type="number" id="sip-amount" step="0.01" placeholder="如 500"></div>
+        <div class="field"><label>费率（%）</label><input type="number" id="sip-fee" step="0.01" value="0.15"></div>
+      </div>
+      <div class="hint-box">按每个扣款日当天的净值计算份额，已存在同日定投记录的日期会自动跳过。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close>取消</button>
+      <button class="btn primary" id="btn-do-sip">生成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加基金弹窗 -->
+<div class="modal-mask" id="modal-fund" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2>添加基金</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>搜索基金</label>
+        <input type="text" id="fund-search" placeholder="输入代码或名称，如 110022 / 消费">
+      </div>
+      <div id="fund-search-result" class="search-results"></div>
+      <div class="field">
+        <label>或直接输入 6 位代码</label>
+        <div class="inline-add">
+          <input type="text" id="fund-code-direct" maxlength="6" placeholder="110022">
+          <select id="fund-cat-direct">
+            <option value="">自动判断</option>
+            <option value="stock">股票</option>
+            <option value="bond">债券</option>
+            <option value="gold">黄金/商品</option>
+            <option value="cash">现金</option>
+            <option value="overseas">海外</option>
+            <option value="other">其他</option>
+          </select>
+          <button class="btn primary sm" id="btn-add-direct">添加</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 模板编辑弹窗 -->
+<div class="modal-mask" id="modal-tpl" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="tpl-modal-title">编辑模板</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="t-id">
+      <div class="field"><label>名称</label><input type="text" id="t-name" placeholder="如 我的四四二"></div>
+      <div class="field"><label>说明</label><input type="text" id="t-desc" placeholder="这个模板解决什么问题"></div>
+      <div class="field"><label>偏离阈值（百分点）</label><input type="number" id="t-threshold" value="5" step="0.5"></div>
+      <label class="label-sm">目标比例（合计需为 100%）</label>
+      <div id="t-items" class="tpl-items"></div>
+      <div class="tpl-total" id="t-total">合计 0%</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost danger" id="btn-del-tpl" hidden>删除</button>
+      <div class="spacer"></div>
+      <button class="btn ghost" data-close>取消</button>
+      <button class="btn primary" id="btn-save-tpl">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="loading" id="loading" hidden><div class="spinner"></div></div>
+
+<script src="/web/app.js"></script>
+</body>
+</html>
