@@ -240,6 +240,18 @@
     </div>
 
     <div class="panel">
+      <div class="panel-head">
+        <h2>对账校准</h2>
+        <button class="btn ghost sm" id="btn-reconcile">开始对账</button>
+      </div>
+      <p class="muted">
+        把这里算出的份额与成本单价，和你从支付宝／天天基金看到的数字比一比。
+        自建账本最怕静默错误：录错一位，之后所有盈亏都是错的，而且看不出来。
+      </p>
+      <div id="reconcile-result"></div>
+    </div>
+
+    <div class="panel">
       <div class="panel-head"><h2>数据</h2></div>
       <p class="muted">所有数据保存在本机的 <code>data/fund.db</code> 单文件里。备份就是复制这个文件。</p>
       <div class="actions">
@@ -406,6 +418,27 @@
       <div class="spacer"></div>
       <button class="btn ghost" data-close>取消</button>
       <button class="btn primary" id="btn-save-tpl">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 对账弹窗 -->
+<div class="modal-mask" id="modal-reconcile" hidden>
+  <div class="modal" style="max-width:560px">
+    <div class="modal-head">
+      <h2>对账校准</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="hint-box" style="margin-bottom:14px">
+        填你从平台上看到的数字，留空表示该项不比对。差异超过
+        <span id="rec-tol">1</span>% 会标出来，但不会自动改动你的记录。
+      </div>
+      <div id="reconcile-form"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close>取消</button>
+      <button class="btn primary" id="btn-do-reconcile">比对</button>
     </div>
   </div>
 </div>

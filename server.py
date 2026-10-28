@@ -355,6 +355,12 @@ def handle_api(method, path, query, body, conn):
         dt = parse_date((query.get("to") or [None])[0])
         return 200, analytics.attribution(conn, dt), {}
 
+    if path == "/api/reconcile" and method == "POST":
+        items = body.get("items") or []
+        if not isinstance(items, list):
+            raise ApiError("items 应为数组")
+        return 200, analytics.reconcile_check(conn, items), {}
+
     # ---- 模板
     if path == "/api/templates" and method == "GET":
         return 200, {"items": engine.load_templates(conn)}, {}

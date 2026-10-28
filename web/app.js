@@ -285,6 +285,84 @@ function renderAttribution(data) {
     </div>`;
 }
 
+/* ---------------- 对账校准 ---------------- */
+
+async function openReconcile() {
+  const holdings = (state.overview && state.overview.positions || []).filter((p) => !p.closed);
+  if (!holdings.length) {
+    toast('当前没有持仓可对账', true);
+    return;
+  }
+  $('#reconcile-form').innerHTML = holdings.map((p) => `
+    <div class="rec-row">
+      <div class="rec-name">${esc(p.name)}<span class="code">${p.code}</span></div>
+      <div class="rec-mine">账面：${num(p.shares)} 份 ｜ 成本 ${num(p.avg_cost, 4)}</div>
+      <div class="rec-inputs">
+        <input type="number" step="0.0001" placeholder="平台份额" data-rec="${p.code}" data-field="shares">
+        <input type="number" step="0.0001" placeholder="平台成本价" data-rec="${p.code}" data-field="avg_cost">
+      </div>
+    </div>`).join('');
+  $('#reconcile-result').innerHTML = '';
+  openModal('#modal-reconcile');
+}
+
+async function doReconcile() {
+  const map = {};
+  $$('#reconcile-form input').forEach((el) => {
+    const v = el.value.trim();
+    if (v === '') return;
+    const code = el.dataset.rec;
+    if (!map[code]) map[code] = { code };
+    map[code][el.dataset.field] = v;
+  });
+  const items = Object.values(map);
+  if (!items.length) {
+    toast('至少填一项才能比对', true);
+    return;
+  }
+  try {
+    loading(true);
+    const data = await post('/api/reconcile', { items });
+    closeModal('#modal-reconcile');
+    renderReconcile(data);
+    toast(`比对 ${data.summary.checked} 只：${data.summary.matched} 只一致，${data.summary.mismatched} 只有差异`,
+      data.summary.mismatched > 0);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    loading(false);
+  }
+}
+
+function renderReconcile(data) {
+  const box = $('#reconcile-result');
+  if (!box) return;
+  const rows = [];
+  for (const it of data.items) {
+    if (it.error) {
+      rows.push(`<div class="rec-item bad"><b>${esc(it.code)}</b> ${esc(it.error)}</div>`);
+      continue;
+    }
+    const head = `<div class="rec-item ${it.ok ? 'good' : 'bad'}">
+      <div class="rec-head">
+        <b>${esc(it.name)}</b>
+        <span class="pill ${it.ok ? 'act-open' : 'act-close'}">${it.ok ? '一致' : '有差异'}</span>
+      </div>`;
+    const detail = it.items.map((x) => `
+      <div class="rec-diff">
+        <span>${x.field}：账面 ${num(x.mine, 4)} ／ 平台 ${num(x.platform, 4)}</span>
+        <span class="${x.within ? 'flat' : cls(-Math.abs(x.diff))}">
+          差 ${x.diff > 0 ? '+' : ''}${num(x.diff, 4)}${x.diff_pct !== null ? `（${x.diff_pct > 0 ? '+' : ''}${x.diff_pct}%）` : ''}
+        </span>
+        ${x.within ? '' : `<div class="rec-hint">${esc(x.hint)}</div>`}
+      </div>`).join('');
+    rows.push(head + detail + '</div>');
+  }
+  box.innerHTML = rows.join('') + `<div class="hint-box" style="margin-top:10px">
+    差异只是提示，不会自动改动记录。确认是录入错误的话，到「操作流水」里改对应那笔。
+  </div>`;
+}
+
 function renderPositions(positions) {
   const holding = positions.filter((p) => !p.closed);
   $('#pos-count').textContent = holding.length ? `共 ${holding.length} 只` : '';
@@ -1010,6 +1088,8 @@ function bindEvents() {
 
   // 添加基金
   $('#btn-add-fund').addEventListener('click', () => openModal('#modal-fund'));
+  $('#btn-reconcile').addEventListener('click', openReconcile);
+  $('#btn-do-reconcile').addEventListener('click', doReconcile);
   bindFundSearch();
   $('#btn-add-direct').addEventListener('click', () => {
     const code = $('#fund-code-direct').value.trim();

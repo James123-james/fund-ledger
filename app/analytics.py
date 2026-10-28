@@ -342,3 +342,124 @@ def attribution(conn, date_to=None):
             ),
         },
     }
+
+
+# ---------------------------------------------------------------- 对账校准
+
+
+# 差异容忍度：份额或成本价相对偏差超过这个比例才提示
+RECONCILE_TOLERANCE = 0.01
+
+
+def reconcile_one(conn, code, platform_shares=None, platform_avg_cost=None):
+    """把一只基金的账面值与你从平台看到的数字比对。
+
+    自建账本最危险的失败模式是静默错误：录入时份额或成本填错一位，
+    之后所有盈亏都是错的，而且看不出来。对账就是主动暴露这类偏差。
+
+    返回差异明细，不做任何自动修正——改不改由人决定。
+    """
+    from . import engine
+
+    pos = {p["code"]: p for p in engine.build_positions(conn)}.get(code)
+    if not pos:
+        return {"code": code, "ok": False, "error": "该基金没有持仓记录"}
+
+    mine_shares = pos["shares"]
+    mine_cost = pos["avg_cost"]
+    items = []
+    ok = True
+
+    if platform_shares is not None and platform_shares >= 0:
+        diff = mine_shares - platform_shares
+        pct = (diff / platform_shares * 100) if platform_shares > EPS else None
+        within = pct is not None and abs(pct) <= RECONCILE_TOLERANCE * 100
+        if abs(diff) > EPS and not within:
+            ok = False
+        items.append(
+            {
+                "field": "份额",
+                "mine": round(mine_shares, 4),
+                "platform": round(platform_shares, 4),
+                "diff": round(diff, 4),
+                "diff_pct": round(pct, 3) if pct is not None else None,
+                "within": within,
+                "hint": _share_hint(diff, mine_shares, platform_shares),
+            }
+        )
+
+    if platform_avg_cost is not None and platform_avg_cost > 0:
+        diff = mine_cost - platform_avg_cost
+        pct = (diff / platform_avg_cost * 100) if platform_avg_cost > EPS else None
+        within = pct is not None and abs(pct) <= RECONCILE_TOLERANCE * 100
+        if abs(diff) > EPS and not within:
+            ok = False
+        items.append(
+            {
+                "field": "成本单价",
+                "mine": round(mine_cost, 4),
+                "platform": round(platform_avg_cost, 4),
+                "diff": round(diff, 4),
+                "diff_pct": round(pct, 3) if pct is not None else None,
+                "within": within,
+                "hint": _cost_hint(diff, platform_avg_cost),
+            }
+        )
+
+    return {
+        "code": code,
+        "name": pos["name"],
+        "ok": ok,
+        "items": items,
+        "value": pos["value"],
+        "cost": pos["cost"],
+        "shares": round(mine_shares, 4),
+        "avg_cost": round(mine_cost, 4),
+        "tolerance_pct": RECONCILE_TOLERANCE * 100,
+    }
+
+
+def _share_hint(diff, mine, platform):
+    if mine > platform:
+        return "你的份额多于平台，可能漏记了一笔卖出，或多记了买入份额"
+    return "你的份额少于平台，可能漏记了买入或定投，或多记了一笔卖出"
+
+
+def _cost_hint(diff, platform_cost):
+    if diff > 0:
+        return (
+            "你的成本高于平台。常见原因：分红方式不同（平台红利再投会摊薄单价）、"
+            "漏记了红利再投、或手续费被重复计入"
+        )
+    return (
+        "你的成本低于平台。常见原因：漏记申购手续费、或有红包/费率优惠未记录"
+    )
+
+
+def reconcile_check(conn, payload):
+    """批量对账。payload 形如 [{code, shares, avg_cost}, ...]"""
+    results = []
+    for item in payload:
+        code = str(item.get("code") or "").strip()
+        if not code:
+            continue
+        shares = item.get("shares")
+        cost = item.get("avg_cost")
+        results.append(
+            reconcile_one(
+                conn,
+                code,
+                float(shares) if shares not in (None, "") else None,
+                float(cost) if cost not in (None, "") else None,
+            )
+        )
+    bad = [r for r in results if not r.get("ok")]
+    return {
+        "items": results,
+        "summary": {
+            "checked": len(results),
+            "matched": len(results) - len(bad),
+            "mismatched": len(bad),
+            "tolerance_pct": RECONCILE_TOLERANCE * 100,
+        },
+    }
