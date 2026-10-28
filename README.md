@@ -194,11 +194,14 @@ fund-ledger/
 │   ├── db.py            建表、内置模板
 │   ├── quotes.py        净值抓取与解析
 │   ├── engine.py        成本计算、组合曲线、配置分析
+│   ├── analytics.py     收益率、归因、基准对比、对账
 │   └── exporter.py      三种格式导出
 ├── tools/
 │   ├── import_records.py  手写记录批量导入
 │   ├── plan.example.py    导入规则示例
 │   └── plan.py            你自己的规则（不入库）
+├── tests/
+│   └── selftest.py        计算口径自检（27 项断言）
 ├── web/
 │   ├── index.html
 │   ├── app.js
@@ -211,8 +214,18 @@ fund-ledger/
 
 ---
 
-## 数据与备份
+## 自检
 
+改动过计算逻辑后，跑一遍自检确认口径没跑偏：
+
+```bash
+python tests/selftest.py
+```
+
+27 项断言，零外部依赖。覆盖 XIRR 与解析解对齐（误差 < 0.01%）、归因贡献可加总、
+基准份额与手工复算一致、对账容差边界。测试数据在临时库里现造，**不会碰你的账本**。
+
+## 数据与备份
 全部数据在 `data/fund.db` 一个文件里。
 
 - **备份**：设置页点「下载数据库备份」，或直接复制 `data/fund.db`
