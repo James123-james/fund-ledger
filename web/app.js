@@ -111,7 +111,7 @@ function switchView(name) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (name === 'txns') loadTxns();
   if (name === 'analysis') loadAnalysis();
-  if (name === 'settings') loadFunds();
+  if (name === 'settings') { loadFunds(); loadBenchList(); }
   if (name === 'export') prepareExport();
 }
 $$('.tab, .bn').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
@@ -131,6 +131,7 @@ async function loadOverview() {
     renderPositions(data.positions || []);
     renderChart((data.series && data.series.points) || []);
     loadReturns();
+    loadBenchmark();
     loadAttribution();
   } catch (e) {
     toast(e.message, true);
@@ -361,6 +362,136 @@ function renderReconcile(data) {
   box.innerHTML = rows.join('') + `<div class="hint-box" style="margin-top:10px">
     差异只是提示，不会自动改动记录。确认是录入错误的话，到「操作流水」里改对应那笔。
   </div>`;
+}
+
+/* ---------------- 基准对比 ---------------- */
+
+async function loadBenchmark() {
+  const box = $('#benchmark');
+  if (!box) return;
+  try {
+    if (!state.benchmarks) {
+      const meta = await api('/api/benchmarks');
+      state.benchmarks = (meta.items || []).filter((b) => b.n > 0);
+      state.benchPresets = meta.presets || [];
+      renderBenchGroup();
+    }
+    const secid = state.benchSecid || (state.benchmarks[0] && state.benchmarks[0].secid);
+    if (!secid) {
+      box.innerHTML = '<div class="empty">还没有基准数据。到设置页点「更新基准」</div>';
+      return;
+    }
+    state.benchSecid = secid;
+    const data = await api('/api/benchmark?secid=' + encodeURIComponent(secid));
+    renderBenchmark(data);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">基准对比失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderBenchGroup() {
+  const g = $('#bench-group');
+  if (!g || !state.benchmarks) return;
+  g.innerHTML = state.benchmarks
+    .map((b) => `<button data-secid="${b.secid}" class="${b.secid === (state.benchSecid || state.benchmarks[0].secid) ? 'active' : ''}">${esc(b.name)}</button>`)
+    .join('');
+  $$('#bench-group button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.benchSecid = btn.dataset.secid;
+      $$('#bench-group button').forEach((x) => x.classList.toggle('active', x === btn));
+      loadBenchmark();
+    });
+  });
+}
+
+function renderBenchmark(data) {
+  const box = $('#benchmark');
+  if (!box) return;
+  if (data.error) {
+    box.innerHTML = `<div class="empty">${esc(data.error)}</div>`;
+    return;
+  }
+  const m = data.mine;
+  const b = data.benchmark_metrics;
+  const diff = data.diff_cumulative;
+  const verdictCls = diff > 2 ? 'up' : diff < -2 ? 'down' : 'flat';
+  const row = (label, x, highlight) => `<tr${highlight ? ' style="border-top:2px solid var(--line)"' : ''}>
+      <td class="name full" data-label="口径">${highlight ? '<b>' + label + '</b>' : label}</td>
+      <td class="num" data-label="期末市值">${money(x.terminal)}</td>
+      <td class="num" data-label="盈亏"><span class="${cls(x.pnl)}">${money(x.pnl, true)}</span></td>
+      <td class="num" data-label="累计收益率"><span class="${cls(x.cumulative)}">${pct(x.cumulative)}</span></td>
+      <td class="num" data-label="年化">${x.annualized === null ? '<span class="flat">—</span>' : `<span class="${cls(x.annualized)}">${pct(x.annualized)}</span>`}</td>
+    </tr>`;
+
+  box.innerHTML = `
+    <div class="bench-verdict">
+      <span class="bv-label">同样 ${money(m.invested)}、同样的时点，只换标的</span>
+      <span class="bv-diff ${verdictCls}">${diff > 0 ? '+' : ''}${diff}pp</span>
+      <span class="pill ${diff > 2 ? 'act-open' : diff < -2 ? 'act-close' : ''}">${esc(data.verdict || '—')}</span>
+    </div>
+    <div class="table-wrap">
+      <table class="responsive">
+        <thead><tr>
+          <th>口径</th><th class="num">期末市值</th><th class="num">盈亏</th>
+          <th class="num">累计收益率</th><th class="num">年化</th>
+        </tr></thead>
+        <tbody>
+          ${row('我的实际组合', m)}
+          ${row(`全买${esc(data.benchmark.name)}`, b, true)}
+        </tbody>
+      </table>
+    </div>
+    <div class="hint-box" style="margin-top:12px">
+      口径说明：把你每一笔买入的金额与日期原样搬到「${esc(data.benchmark.name)}」上，卖出也同日等额模拟。
+      这样差别只剩「买什么」这一项，排除了择时差异。
+      参考：${esc(data.benchmark.name)}区间本身涨跌 ${pct(data.index_return)}，估值日 ${data.asof}。
+    </div>`;
+}
+
+/* ---------------- 基准管理 ---------------- */
+
+async function loadBenchList() {
+  const box = $('#bench-list');
+  if (!box) return;
+  try {
+    const data = await api('/api/benchmarks');
+    state.benchmarks = (data.items || []).filter((b) => b.n > 0);
+    state.benchPresets = data.presets || [];
+    const items = data.items || [];
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">还没有基准数据，点右上角「更新全部基准」</div>';
+      return;
+    }
+    box.innerHTML = items.map((b) => `
+      <div class="fund-row">
+        <div class="fmain">
+          <div class="fname">${esc(b.name)}</div>
+          <div class="fcode">${b.secid} · ${b.n} 条 · 更新于 ${(b.updated_at || '').slice(0, 16)}</div>
+        </div>
+        <button class="icon-btn" data-bsync="${b.secid}" title="更新" style="font-size:13px;padding:3px 6px">↻</button>
+      </div>`).join('');
+    box.querySelectorAll('[data-bsync]').forEach((btn) => {
+      btn.addEventListener('click', () => syncBench(btn.dataset.bsync));
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+async function syncBench(secid) {
+  const preset = (state.benchPresets || []).find((p) => p.secid === secid);
+  try {
+    loading(true);
+    const r = await post('/api/benchmarks/sync', { secid, name: preset ? preset.name : null });
+    toast(`${r.name} 已更新 ${r.rows} 条`);
+    state.benchmarks = null;
+    await loadBenchList();
+    loadBenchmark();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    loading(false);
+  }
 }
 
 function renderPositions(positions) {
@@ -1089,6 +1220,23 @@ function bindEvents() {
   // 添加基金
   $('#btn-add-fund').addEventListener('click', () => openModal('#modal-fund'));
   $('#btn-reconcile').addEventListener('click', openReconcile);
+  $('#btn-sync-bench').addEventListener('click', async () => {
+    const presets = state.benchPresets || [];
+    if (!presets.length) { toast('没有可用的预设指数', true); return; }
+    const okList = [], bad = [];
+    loading(true);
+    for (const p of presets) {
+      try {
+        await post('/api/benchmarks/sync', { secid: p.secid, name: p.name });
+        okList.push(p.name);
+      } catch (e) { bad.push(p.name); }
+    }
+    loading(false);
+    toast(bad.length ? `已更新 ${okList.length} 个，失败 ${bad.length} 个` : `已更新 ${okList.length} 个基准`);
+    state.benchmarks = null;
+    await loadBenchList();
+    loadBenchmark();
+  });
   $('#btn-do-reconcile').addEventListener('click', doReconcile);
   bindFundSearch();
   $('#btn-add-direct').addEventListener('click', () => {

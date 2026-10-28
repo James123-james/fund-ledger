@@ -290,6 +290,37 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
         L.append("_暂无可归因的持仓。_")
         L.append("")
 
+    # 3.3 基准对比
+    bench = _an.benchmark_compare(conn, "1.000300")
+    L.append("### 3.3 基准对比（同样现金流换成沪深300）")
+    L.append("")
+    if bench.get("error"):
+        L.append(f"_{bench['error']}_")
+        L.append("")
+    else:
+        bm, bb = bench["mine"], bench["benchmark_metrics"]
+        L.append(
+            "把每一笔买入的金额与日期原样搬到沪深300上、卖出也同日等额模拟，"
+            "差别只剩「买什么」这一项，排除了择时差异。"
+        )
+        L.append("")
+        L.append("| 口径 | 期末市值 | 盈亏 | 累计收益率 | 年化 |")
+        L.append("| --- | ---: | ---: | ---: | ---: |")
+        L.append(
+            f"| 我的实际组合 | {_money(bm['terminal'])} | {_money(bm['pnl'])} | "
+            f"{_pct(bm['cumulative'])} | {_pct(bm['annualized']) if bm['annualized'] is not None else '—'} |"
+        )
+        L.append(
+            f"| 全买沪深300 | {_money(bb['terminal'])} | {_money(bb['pnl'])} | "
+            f"{_pct(bb['cumulative'])} | {_pct(bb['annualized']) if bb['annualized'] is not None else '—'} |"
+        )
+        L.append("")
+        L.append(
+            f"结论：**{bench['verdict']}**，累计收益率差 {bench['diff_cumulative']:+.2f} 个百分点。"
+            f"参考：沪深300 区间本身涨跌 {_pct(bench['index_return'])}。"
+        )
+        L.append("")
+
     # 4. 操作流水
     L.append("## 4. 操作流水")
     L.append("")

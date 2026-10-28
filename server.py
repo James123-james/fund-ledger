@@ -361,6 +361,26 @@ def handle_api(method, path, query, body, conn):
             raise ApiError("items 应为数组")
         return 200, analytics.reconcile_check(conn, items), {}
 
+    # ---- 基准
+    if path == "/api/benchmarks" and method == "GET":
+        rows = conn.execute(
+            "SELECT secid, name, updated_at, "
+            "(SELECT COUNT(*) FROM benchmark_nav WHERE benchmark_nav.secid = benchmarks.secid) AS n "
+            "FROM benchmarks "
+            "ORDER BY CASE WHEN secid = '1.000300' THEN 0 ELSE 1 END, secid"
+        ).fetchall()
+        return 200, {"items": [dict(r) for r in rows], "presets": quotes.INDEX_PRESETS}, {}
+
+    if path == "/api/benchmarks/sync" and method == "POST":
+        secid = (body.get("secid") or "1.000300").strip()
+        name = body.get("name")
+        return 200, quotes.sync_index(conn, secid, name), {}
+
+    if path == "/api/benchmark" and method == "GET":
+        secid = (query.get("secid") or ["1.000300"])[0]
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, analytics.benchmark_compare(conn, secid, dt), {}
+
     # ---- 模板
     if path == "/api/templates" and method == "GET":
         return 200, {"items": engine.load_templates(conn)}, {}

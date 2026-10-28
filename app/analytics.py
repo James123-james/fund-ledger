@@ -43,10 +43,12 @@ def valuation_date(conn, date_to=None):
     return latest
 
 
-def build_flows(conn, code=None, date_to=None):
+def build_flows(conn, code=None, date_to=None, include_terminal=True):
     """构建一组现金流：流出为负、流入为正，末尾追加期末市值。
 
     返回 (flows, meta)。flows 为 [(date, amount)]，按日期升序。
+    include_terminal=False 时不含期末市值，供基准模拟使用——
+    基准的期末市值要按自己的份额算，不能直接套用组合的。
     """
     from . import engine
 
@@ -84,7 +86,7 @@ def build_flows(conn, code=None, date_to=None):
         positions = [p for p in positions if p["code"] == code]
     terminal_value = sum(p["value"] for p in positions if not p["closed"])
 
-    if terminal_value > EPS:
+    if include_terminal and terminal_value > EPS:
         flows.append((asof_d, terminal_value))
 
     flows.sort(key=lambda x: x[0])
@@ -462,4 +464,146 @@ def reconcile_check(conn, payload):
             "mismatched": len(bad),
             "tolerance_pct": RECONCILE_TOLERANCE * 100,
         },
+    }
+
+
+# ---------------------------------------------------------------- 基准对比
+
+
+def _close_on_or_before(closes, ds):
+    """取 ds 当天或之前最近的收盘价。非交易日自动向前顺延。"""
+    if ds in closes:
+        return closes[ds]
+    prior = [d for d in closes if d <= ds]
+    return closes[max(prior)] if prior else None
+
+
+def benchmark_compare(conn, secid="1.000300", date_to=None):
+    """同样现金流、换成基准指数，做等口径对比。
+
+    这是「如果每笔钱都在同一时点买沪深300，现在会怎样」。比单纯看
+    指数涨幅更有意义，因为它复现了你的定投节奏与加减仓时点——
+    差别只剩「买什么」这一项，排除了择时差异。
+
+    卖出也会同步模拟：你在某天赎回多少，基准就在同一天卖出同等金额。
+    """
+    row = conn.execute("SELECT name FROM benchmarks WHERE secid = ?", (secid,)).fetchone()
+    if not row:
+        return {"error": f"基准 {secid} 未同步，请先更新"}
+    bench_name = row["name"]
+
+    nav_rows = conn.execute(
+        "SELECT date, close FROM benchmark_nav WHERE secid = ? ORDER BY date", (secid,)
+    ).fetchall()
+    if not nav_rows:
+        return {"error": f"基准 {secid} 没有价格数据"}
+    # 统一用 date 对象做键：build_flows 返回的是 date，字符串比较会 TypeError
+    closes = {date.fromisoformat(r["date"]): float(r["close"]) for r in nav_rows}
+
+    flows_all, meta = build_flows(conn, date_to=date_to)
+    cash_flows, _ = build_flows(conn, date_to=date_to, include_terminal=False)
+    asof = meta["asof"]
+    my_terminal = meta["terminal_value"]
+
+    if not cash_flows:
+        return {"error": "没有可对比的现金流"}
+
+    # 模拟基准持仓
+    units = 0.0
+    skipped = []
+    for d, cf in cash_flows:
+        px = _close_on_or_before(closes, d)
+        if px is None or px <= 0:
+            skipped.append(d)
+            continue
+        if cf < 0:
+            units += -cf / px
+        else:
+            units -= cf / px
+            if units < 0:
+                units = 0.0
+
+    last_px = _close_on_or_before(closes, date.fromisoformat(asof))
+    if last_px is None:
+        return {"error": "基准在估值日之前没有价格"}
+    bench_terminal = units * last_px
+    bench_flows = cash_flows + ([(date.fromisoformat(asof), bench_terminal)] if bench_terminal > EPS else [])
+
+    # 两边的累计与年化
+    def _metrics(flows, terminal):
+        invested = sum(-cf for _, cf in flows if cf < 0)
+        returned = sum(cf for _, cf in flows if cf > 0)
+        pnl = returned - invested
+        days = (flows[-1][0] - flows[0][0]).days if len(flows) > 1 else 0
+        ann = None
+        if days >= MIN_ANNUALIZE_DAYS:
+            r = solve_irr(flows)
+            ann = round(r * 100, 2) if r is not None else None
+        return {
+            "invested": round(invested, 2),
+            "terminal": round(terminal, 2),
+            "pnl": round(pnl, 2),
+            "cumulative": round(pnl / invested * 100, 2) if invested > EPS else None,
+            "annualized": ann,
+            "days": days,
+        }
+
+    mine = _metrics(flows_all, my_terminal)
+    bench = _metrics(bench_flows, bench_terminal)
+
+    # 指数在区间内的原始涨跌，作为背景参考
+    first_px = _close_on_or_before(closes, cash_flows[0][0])
+    index_return = round((last_px / first_px - 1) * 100, 2) if first_px else None
+
+    diff_cum = None
+    if mine["cumulative"] is not None and bench["cumulative"] is not None:
+        diff_cum = round(mine["cumulative"] - bench["cumulative"], 2)
+    diff_ann = None
+    if mine["annualized"] is not None and bench["annualized"] is not None:
+        diff_ann = round(mine["annualized"] - bench["annualized"], 2)
+
+    return {
+        "benchmark": {"secid": secid, "name": bench_name},
+        "asof": asof,
+        "mine": mine,
+        "benchmark_metrics": bench,
+        "diff_cumulative": diff_cum,
+        "diff_annualized": diff_ann,
+        "index_return": index_return,
+        "benchmark_units": round(units, 4),
+        "benchmark_price": {"first": first_px, "last": last_px},
+        "skipped_dates": skipped[:10],
+        "verdict": _verdict(diff_cum),
+    }
+
+
+def _verdict(diff):
+    if diff is None:
+        return None
+    if diff > 2:
+        return "跑赢基准"
+    if diff < -2:
+        return "跑输基准"
+    return "与基准基本持平"
+
+
+def benchmark_series(conn, secid="1.000300", date_from=None, date_to=None):
+    """把基准换算成与组合同起点归一化的曲线，供图上叠加。
+
+    以两条曲线的第一个共同交易日为 100，比较相对走势。
+    """
+    from . import engine
+
+    rows = conn.execute(
+        "SELECT date, close FROM benchmark_nav WHERE secid = ? AND date >= ? AND date <= ? ORDER BY date",
+        (secid, date_from or "2000-01-01", date_to or "2100-01-01"),
+    ).fetchall()
+    if not rows:
+        return {"points": []}
+    base = float(rows[0]["close"])
+    return {
+        "points": [
+            {"date": r["date"], "value": round(float(r["close"]) / base * 100, 2)}
+            for r in rows
+        ]
     }

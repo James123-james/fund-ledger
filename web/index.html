@@ -80,6 +80,14 @@
 
     <div class="panel">
       <div class="panel-head">
+        <h2>基准对比</h2>
+        <div class="range-group" id="bench-group"></div>
+      </div>
+      <div id="benchmark"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
         <h2>收益归因</h2>
         <span class="hint" id="attr-hint"></span>
       </div>
@@ -237,6 +245,15 @@
         <button class="btn ghost sm" id="btn-add-fund">+ 添加基金</button>
       </div>
       <div id="fund-list"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>基准指数</h2>
+        <button class="btn ghost sm" id="btn-sync-bench">更新全部基准</button>
+      </div>
+      <p class="muted">用于「同样现金流换成指数会怎样」的对比。数据来自东方财富指数日线。</p>
+      <div id="bench-list"></div>
     </div>
 
     <div class="panel">

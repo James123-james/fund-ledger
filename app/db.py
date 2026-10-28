@@ -88,6 +88,20 @@ CREATE TABLE IF NOT EXISTS template_items (
     FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS benchmarks (
+    secid      TEXT PRIMARY KEY,   -- 东方财富 secid，如 1.000300
+    name       TEXT NOT NULL,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_nav (
+    secid TEXT NOT NULL,
+    date  TEXT NOT NULL,
+    close REAL NOT NULL,
+    PRIMARY KEY (secid, date)
+);
+CREATE INDEX IF NOT EXISTS idx_bnav_date ON benchmark_nav(date);
+
 CREATE TABLE IF NOT EXISTS settings (
     k TEXT PRIMARY KEY,
     v TEXT
