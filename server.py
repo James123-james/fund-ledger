@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app import db, engine, exporter, quotes  # noqa: E402
+from app import analytics, db, engine, exporter, quotes  # noqa: E402
 
 WEB_DIR = os.path.join(BASE_DIR, "web")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -345,6 +345,41 @@ def handle_api(method, path, query, body, conn):
         tid = (query.get("template_id") or [None])[0]
         extra = to_num((query.get("extra_cash") or [None])[0], 0.0)
         return 200, engine.analyze_allocation(conn, tid, extra), {}
+
+    # ---- 收益率分析
+    if path == "/api/returns" and method == "GET":
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, analytics.irr_table(conn, dt), {}
+
+    if path == "/api/attribution" and method == "GET":
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, analytics.attribution(conn, dt), {}
+
+    if path == "/api/reconcile" and method == "POST":
+        items = body.get("items") or []
+        if not isinstance(items, list):
+            raise ApiError("items 应为数组")
+        return 200, analytics.reconcile_check(conn, items), {}
+
+    # ---- 基准
+    if path == "/api/benchmarks" and method == "GET":
+        rows = conn.execute(
+            "SELECT secid, name, updated_at, "
+            "(SELECT COUNT(*) FROM benchmark_nav WHERE benchmark_nav.secid = benchmarks.secid) AS n "
+            "FROM benchmarks "
+            "ORDER BY CASE WHEN secid = '1.000300' THEN 0 ELSE 1 END, secid"
+        ).fetchall()
+        return 200, {"items": [dict(r) for r in rows], "presets": quotes.INDEX_PRESETS}, {}
+
+    if path == "/api/benchmarks/sync" and method == "POST":
+        secid = (body.get("secid") or "1.000300").strip()
+        name = body.get("name")
+        return 200, quotes.sync_index(conn, secid, name), {}
+
+    if path == "/api/benchmark" and method == "GET":
+        secid = (query.get("secid") or ["1.000300"])[0]
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, analytics.benchmark_compare(conn, secid, dt), {}
 
     # ---- 模板
     if path == "/api/templates" and method == "GET":

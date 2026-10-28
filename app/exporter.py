@@ -208,8 +208,121 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
             )
         L.append("")
 
-    # 3. 操作流水
-    L.append("## 3. 操作流水")
+    # 3. 收益质量
+    from . import analytics as _an
+
+    ret = _an.irr_table(conn)
+    L.append("## 3. 收益质量")
+    L.append("")
+    L.append("### 3.1 累计收益率 vs 年化 XIRR")
+    L.append("")
+    L.append(
+        "**累计收益率** = 盈亏 ÷ 投入，不反映时间；**年化 XIRR** 按每笔现金流的实际发生日折现。"
+        "持有不足 90 天时年化失真（18 天亏 13% 折算成年化是 −94%），故不给数值。"
+    )
+    L.append("")
+    rr = [r for r in ret["rows"] if (r["invested"] or 0) > 0.01]
+    if rr:
+        L.append("| 代码 | 名称 | 投入 | 盈亏 | 累计收益率 | 年化 XIRR | 持有天数 | 备注 |")
+        L.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+        for r in rr:
+            ann = _pct(r["annualized"]) if r["annualized"] is not None else "—"
+            note = r["reason"] or ""
+            L.append(
+                f"| {r['code']} | {r['name']} | {_money(r['invested'])} | "
+                f"{_money(r['pnl'])} | {_pct(r['cumulative'])} | {ann} | {r['days']} | {note} |"
+            )
+        p = ret["portfolio"]
+        pann = _pct(p["annualized"]) if p["annualized"] is not None else "—"
+        L.append(
+            f"| **合计** | ｜ | {_money(p['invested'])} | {_money(p['pnl'])} | "
+            f"{_pct(p['cumulative'])} | **{pann}** | {p['days']} | 估值日 {p['asof']} |"
+        )
+        L.append("")
+        L.append(
+            "> 组合层面的年化是把全部现金流合并后求一个内部收益率，不是各基金年化的平均。"
+            "两者不可直接比较。"
+        )
+        L.append("")
+    else:
+        L.append("_暂无可计算收益率的持仓。_")
+        L.append("")
+
+    # 3.2 收益归因
+    attr = _an.attribution(conn)
+    L.append("### 3.2 收益归因")
+    L.append("")
+    if attr["rows"]:
+        asum = attr["summary"]
+        L.append(
+            f"组合总收益率 {_pct(asum['return_pct'])}，"
+            f"共 {asum['gainers']} 只盈利、{asum['losers']} 只亏损。"
+            f"亏损合计 {_money(attr['total_loss'])}，盈利合计 {_money(attr['total_gain'])}。"
+        )
+        L.append("")
+        L.append("| 代码 | 名称 | 类别 | 投入 | 浮动盈亏 | 已实现 | 合计盈亏 | 贡献(pp) | 占全部亏损 |")
+        L.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for r in attr["rows"]:
+            pp = f"{r['contribution_pp']:+.3f}" if r["contribution_pp"] is not None else "—"
+            shl = f"{r['share_of_loss']:.1f}%" if r["share_of_loss"] is not None else "—"
+            L.append(
+                f"| {r['code']} | {r['name']} | {r['category_name']} | {_money(r['invested'])} | "
+                f"{_money(r['unrealized'])} | {_money(r['realized'])} | {_money(r['pnl'])} | "
+                f"{pp} | {shl} |"
+            )
+        L.append("")
+        L.append("**按资产类别汇总**")
+        L.append("")
+        L.append("| 类别 | 只数 | 投入 | 盈亏 | 收益率 |")
+        L.append("| --- | ---: | ---: | ---: | ---: |")
+        for c in attr["by_category"]:
+            L.append(
+                f"| {c['category_name']} | {c['count']} | {_money(c['invested'])} | "
+                f"{_money(c['pnl'])} | {_pct(c['return_pct'])} |"
+            )
+        L.append("")
+        L.append(
+            "> 贡献（pp）＝ 该基金盈亏 ÷ 组合总投入，各基金相加恰好等于组合总收益率，"
+            "可直接读出「谁把收益拉低了多少个百分点」。"
+        )
+        L.append("")
+    else:
+        L.append("_暂无可归因的持仓。_")
+        L.append("")
+
+    # 3.3 基准对比
+    bench = _an.benchmark_compare(conn, "1.000300")
+    L.append("### 3.3 基准对比（同样现金流换成沪深300）")
+    L.append("")
+    if bench.get("error"):
+        L.append(f"_{bench['error']}_")
+        L.append("")
+    else:
+        bm, bb = bench["mine"], bench["benchmark_metrics"]
+        L.append(
+            "把每一笔买入的金额与日期原样搬到沪深300上、卖出也同日等额模拟，"
+            "差别只剩「买什么」这一项，排除了择时差异。"
+        )
+        L.append("")
+        L.append("| 口径 | 期末市值 | 盈亏 | 累计收益率 | 年化 |")
+        L.append("| --- | ---: | ---: | ---: | ---: |")
+        L.append(
+            f"| 我的实际组合 | {_money(bm['terminal'])} | {_money(bm['pnl'])} | "
+            f"{_pct(bm['cumulative'])} | {_pct(bm['annualized']) if bm['annualized'] is not None else '—'} |"
+        )
+        L.append(
+            f"| 全买沪深300 | {_money(bb['terminal'])} | {_money(bb['pnl'])} | "
+            f"{_pct(bb['cumulative'])} | {_pct(bb['annualized']) if bb['annualized'] is not None else '—'} |"
+        )
+        L.append("")
+        L.append(
+            f"结论：**{bench['verdict']}**，累计收益率差 {bench['diff_cumulative']:+.2f} 个百分点。"
+            f"参考：沪深300 区间本身涨跌 {_pct(bench['index_return'])}。"
+        )
+        L.append("")
+
+    # 4. 操作流水
+    L.append("## 4. 操作流水")
     L.append("")
     if d["txns"]:
         L.append("| # | 日期 | 代码 | 名称 | 操作 | 金额(元) | 份额 | 成交净值 | 手续费(元) | 当日涨跌幅 | 备注 |")
@@ -234,9 +347,9 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
 
     # 4. 净值与涨跌幅
     if level in ("standard", "full") and d["series"]["points"]:
-        L.append("## 4. 每日净值与涨跌幅")
+        L.append("## 5. 每日净值与涨跌幅")
         L.append("")
-        L.append("### 4.1 组合表现（按月末取点）")
+        L.append("### 5.1 组合表现（按月末取点）")
         L.append("")
         L.append("| 月份 | 月末市值 | 持仓成本 | 该月最后一日盈亏 |")
         L.append("| --- | ---: | ---: | ---: |")
@@ -245,7 +358,7 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
         L.append("")
 
         if level == "full":
-            L.append("### 4.2 组合逐日明细")
+            L.append("### 5.2 组合逐日明细")
             L.append("")
             L.append("| 日期 | 市值 | 成本 | 当日盈亏 | 当日涨跌幅 |")
             L.append("| --- | ---: | ---: | ---: | ---: |")
@@ -256,7 +369,7 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
                 )
             L.append("")
 
-        L.append("### 4.3 各基金月度涨跌")
+        L.append("### 5.3 各基金月度涨跌")
         L.append("")
         codes = [p["code"] for p in holding]
         if codes:
@@ -290,7 +403,7 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
 
     # 5. 配置分析
     alloc = engine.analyze_allocation(conn, template_id, extra_cash) if template_id else None
-    L.append("## 5. 资产配置分析")
+    L.append("## 6. 资产配置分析")
     L.append("")
     if alloc and alloc.get("template"):
         tpl = alloc["template"]
@@ -344,7 +457,7 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
 
     L.append("---")
     L.append("")
-    L.append("## 6. 分析建议提示")
+    L.append("## 7. 分析建议提示")
     L.append("")
     L.append("把这份文件交给 AI 时，可以这样提问：")
     L.append("")

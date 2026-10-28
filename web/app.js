@@ -111,7 +111,7 @@ function switchView(name) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (name === 'txns') loadTxns();
   if (name === 'analysis') loadAnalysis();
-  if (name === 'settings') loadFunds();
+  if (name === 'settings') { loadFunds(); loadBenchList(); }
   if (name === 'export') prepareExport();
 }
 $$('.tab, .bn').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
@@ -130,6 +130,9 @@ async function loadOverview() {
     renderStats(data.summary);
     renderPositions(data.positions || []);
     renderChart((data.series && data.series.points) || []);
+    loadReturns();
+    loadBenchmark();
+    loadAttribution();
   } catch (e) {
     toast(e.message, true);
   }
@@ -147,6 +150,348 @@ function renderStats(s) {
     `浮动 ${money(s.unrealized, true)} · 已实现 ${money(s.realized, true)}`, cls(s.total_pnl));
   set('#s-today', money(s.today_pnl, true), pct(s.today_pct), cls(s.today_pnl));
   set('#s-realized', money(s.realized, true), `累计手续费 ${money(s.total_fee)}`, cls(s.realized));
+}
+
+/* ---------------- 收益质量：XIRR 年化 ---------------- */
+
+async function loadReturns() {
+  try {
+    const data = await api('/api/returns');
+    renderReturns(data);
+  } catch (e) {
+    const box = $('#returns');
+    if (box) box.innerHTML = `<div class="empty">收益率计算失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderReturns(data) {
+  const box = $('#returns');
+  if (!box) return;
+  const rows = (data.rows || []).filter((r) => r.invested > 0.01);
+  const p = data.portfolio || {};
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">还没有足够数据计算收益率</div>';
+    $('#returns-hint').textContent = '';
+    return;
+  }
+
+  $('#returns-hint').textContent = p.asof ? `估值日 ${p.asof}` : '';
+
+  const cell = (v) => (v === null || v === undefined ? '<span class="flat">—</span>' : `<span class="${cls(v)}">${pct(v)}</span>`);
+
+  const trs = rows.map((r) => `<tr>
+      <td class="name full" data-label="基金">${esc(r.name)}<span class="code">${r.code}</span></td>
+      <td class="num" data-label="投入">${money(r.invested)}</td>
+      <td class="num" data-label="盈亏"><span class="${cls(r.pnl)}">${money(r.pnl, true)}</span></td>
+      <td class="num" data-label="累计收益率">${cell(r.cumulative)}</td>
+      <td class="num" data-label="年化 XIRR">${r.annualized === null ? '<span class="flat" title="' + esc(r.reason || '') + '">—</span>' : cell(r.annualized)}</td>
+      <td class="num hide-m" data-label="持有天数">${r.days}</td>
+    </tr>`).join('');
+
+  const pAnn = p.annualized === null || p.annualized === undefined
+    ? `<span class="flat">—</span>`
+    : `<span class="${cls(p.annualized)}">${pct(p.annualized)}</span>`;
+  const pCum = p.cumulative === null || p.cumulative === undefined
+    ? `<span class="flat">—</span>`
+    : `<span class="${cls(p.cumulative)}">${pct(p.cumulative)}</span>`;
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="responsive">
+        <thead><tr>
+          <th>基金</th><th class="num">投入</th><th class="num">盈亏</th>
+          <th class="num">累计收益率</th><th class="num">年化 XIRR</th><th class="num">持有天数</th>
+        </tr></thead>
+        <tbody>${trs}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--line)">
+            <td class="name full" data-label="组合合计"><b>组合合计</b></td>
+            <td class="num" data-label="投入"><b>${money(p.invested)}</b></td>
+            <td class="num" data-label="盈亏"><b><span class="${cls(p.pnl)}">${money(p.pnl, true)}</span></b></td>
+            <td class="num" data-label="累计收益率"><b>${pCum}</b></td>
+            <td class="num" data-label="年化 XIRR"><b>${pAnn}</b></td>
+            <td class="num hide-m" data-label="持有天数"><b>${p.days || 0}</b></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="hint-box" style="margin-top:12px">
+      累计收益率 = 盈亏 ÷ 投入，不反映时间；年化 XIRR 按每笔现金流的实际发生日折现，是定投场景下更诚实的口径。
+      持有不足 ${90} 天的基金不给年化——样本太短，折算成年化会得到 −90% 之类的失真数字。
+    </div>`;
+}
+
+/* ---------------- 收益归因 ---------------- */
+
+async function loadAttribution() {
+  try {
+    const data = await api('/api/attribution');
+    renderAttribution(data);
+  } catch (e) {
+    const box = $('#attribution');
+    if (box) box.innerHTML = `<div class="empty">归因计算失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderAttribution(data) {
+  const box = $('#attribution');
+  if (!box) return;
+  const rows = (data.rows || []).filter((r) => r.invested > 0.01);
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">还没有足够数据做归因</div>';
+    $('#attr-hint').textContent = '';
+    return;
+  }
+  const s = data.summary || {};
+  $('#attr-hint').textContent = `${s.gainers || 0} 只盈利 · ${s.losers || 0} 只亏损`;
+
+  const maxAbs = Math.max(...rows.map((r) => Math.abs(r.pnl)), 1);
+
+  const bars = rows.map((r) => {
+    const w = (Math.abs(r.pnl) / maxAbs) * 100;
+    const positive = r.pnl >= 0;
+    return `<div class="alloc-row" style="margin-bottom:11px">
+      <div class="alloc-head">
+        <span class="alloc-name">${esc(r.name)}<span class="code" style="font-size:11px;color:var(--ink-3);margin-left:6px">${r.code}</span></span>
+        <span class="alloc-nums">
+          <span class="${cls(r.pnl)}">${money(r.pnl, true)}</span>
+          ${r.contribution_pp !== null ? ` <span class="flat">${r.contribution_pp > 0 ? '+' : ''}${r.contribution_pp.toFixed(2)}pp</span>` : ''}
+        </span>
+      </div>
+      <div class="alloc-track" style="height:9px">
+        <div class="alloc-fill" style="width:${Math.max(w, 0.8)}%;background:${positive ? 'var(--up)' : 'var(--down)'};opacity:.8"></div>
+      </div>
+      <div class="alloc-foot">
+        <span>投入 ${money(r.invested)} ｜ 收益率 <span class="${cls(r.closed ? (r.realized / r.invested * 100) : r.unrealized_pct)}">${r.closed ? pct(r.realized / r.invested * 100) : pct(r.unrealized_pct)}</span></span>
+        <span>${r.share_of_loss !== null ? `占全部亏损 ${r.share_of_loss.toFixed(1)}%` : ''}${r.closed ? ' 已清仓' : ''}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const cats = (data.by_category || []).map((c) =>
+    `<div class="reb-item">
+      <span>${esc(c.category_name)} <span style="color:var(--ink-3);font-size:11.5px">${c.count} 只</span></span>
+      <span class="amt"><span class="${cls(c.pnl)}">${money(c.pnl, true)}</span> <span class="flat" style="font-size:11.5px">${pct(c.return_pct)}</span></span>
+    </div>`).join('');
+
+  box.innerHTML = `
+    ${bars}
+    <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line)">
+      <div style="font-size:12.5px;font-weight:650;margin-bottom:9px">按资产类别</div>
+      ${cats}
+    </div>
+    <div class="hint-box" style="margin-top:14px">
+      贡献（pp）＝ 该基金盈亏 ÷ 组合总投入，各基金相加恰好等于组合总收益率 ${pct(s.return_pct)}。
+      「占全部亏损」看的是单只基金在亏损总额中的权重——小仓位高跌幅与大仓位小跌幅，改进方向不同。
+    </div>`;
+}
+
+/* ---------------- 对账校准 ---------------- */
+
+async function openReconcile() {
+  const holdings = (state.overview && state.overview.positions || []).filter((p) => !p.closed);
+  if (!holdings.length) {
+    toast('当前没有持仓可对账', true);
+    return;
+  }
+  $('#reconcile-form').innerHTML = holdings.map((p) => `
+    <div class="rec-row">
+      <div class="rec-name">${esc(p.name)}<span class="code">${p.code}</span></div>
+      <div class="rec-mine">账面：${num(p.shares)} 份 ｜ 成本 ${num(p.avg_cost, 4)}</div>
+      <div class="rec-inputs">
+        <input type="number" step="0.0001" placeholder="平台份额" data-rec="${p.code}" data-field="shares">
+        <input type="number" step="0.0001" placeholder="平台成本价" data-rec="${p.code}" data-field="avg_cost">
+      </div>
+    </div>`).join('');
+  $('#reconcile-result').innerHTML = '';
+  openModal('#modal-reconcile');
+}
+
+async function doReconcile() {
+  const map = {};
+  $$('#reconcile-form input').forEach((el) => {
+    const v = el.value.trim();
+    if (v === '') return;
+    const code = el.dataset.rec;
+    if (!map[code]) map[code] = { code };
+    map[code][el.dataset.field] = v;
+  });
+  const items = Object.values(map);
+  if (!items.length) {
+    toast('至少填一项才能比对', true);
+    return;
+  }
+  try {
+    loading(true);
+    const data = await post('/api/reconcile', { items });
+    closeModal('#modal-reconcile');
+    renderReconcile(data);
+    toast(`比对 ${data.summary.checked} 只：${data.summary.matched} 只一致，${data.summary.mismatched} 只有差异`,
+      data.summary.mismatched > 0);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    loading(false);
+  }
+}
+
+function renderReconcile(data) {
+  const box = $('#reconcile-result');
+  if (!box) return;
+  const rows = [];
+  for (const it of data.items) {
+    if (it.error) {
+      rows.push(`<div class="rec-item bad"><b>${esc(it.code)}</b> ${esc(it.error)}</div>`);
+      continue;
+    }
+    const head = `<div class="rec-item ${it.ok ? 'good' : 'bad'}">
+      <div class="rec-head">
+        <b>${esc(it.name)}</b>
+        <span class="pill ${it.ok ? 'act-open' : 'act-close'}">${it.ok ? '一致' : '有差异'}</span>
+      </div>`;
+    const detail = it.items.map((x) => `
+      <div class="rec-diff">
+        <span>${x.field}：账面 ${num(x.mine, 4)} ／ 平台 ${num(x.platform, 4)}</span>
+        <span class="${x.within ? 'flat' : cls(-Math.abs(x.diff))}">
+          差 ${x.diff > 0 ? '+' : ''}${num(x.diff, 4)}${x.diff_pct !== null ? `（${x.diff_pct > 0 ? '+' : ''}${x.diff_pct}%）` : ''}
+        </span>
+        ${x.within ? '' : `<div class="rec-hint">${esc(x.hint)}</div>`}
+      </div>`).join('');
+    rows.push(head + detail + '</div>');
+  }
+  box.innerHTML = rows.join('') + `<div class="hint-box" style="margin-top:10px">
+    差异只是提示，不会自动改动记录。确认是录入错误的话，到「操作流水」里改对应那笔。
+  </div>`;
+}
+
+/* ---------------- 基准对比 ---------------- */
+
+async function loadBenchmark() {
+  const box = $('#benchmark');
+  if (!box) return;
+  try {
+    if (!state.benchmarks) {
+      const meta = await api('/api/benchmarks');
+      state.benchmarks = (meta.items || []).filter((b) => b.n > 0);
+      state.benchPresets = meta.presets || [];
+      renderBenchGroup();
+    }
+    const secid = state.benchSecid || (state.benchmarks[0] && state.benchmarks[0].secid);
+    if (!secid) {
+      box.innerHTML = '<div class="empty">还没有基准数据。到设置页点「更新基准」</div>';
+      return;
+    }
+    state.benchSecid = secid;
+    const data = await api('/api/benchmark?secid=' + encodeURIComponent(secid));
+    renderBenchmark(data);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">基准对比失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderBenchGroup() {
+  const g = $('#bench-group');
+  if (!g || !state.benchmarks) return;
+  g.innerHTML = state.benchmarks
+    .map((b) => `<button data-secid="${b.secid}" class="${b.secid === (state.benchSecid || state.benchmarks[0].secid) ? 'active' : ''}">${esc(b.name)}</button>`)
+    .join('');
+  $$('#bench-group button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.benchSecid = btn.dataset.secid;
+      $$('#bench-group button').forEach((x) => x.classList.toggle('active', x === btn));
+      loadBenchmark();
+    });
+  });
+}
+
+function renderBenchmark(data) {
+  const box = $('#benchmark');
+  if (!box) return;
+  if (data.error) {
+    box.innerHTML = `<div class="empty">${esc(data.error)}</div>`;
+    return;
+  }
+  const m = data.mine;
+  const b = data.benchmark_metrics;
+  const diff = data.diff_cumulative;
+  const verdictCls = diff > 2 ? 'up' : diff < -2 ? 'down' : 'flat';
+  const row = (label, x, highlight) => `<tr${highlight ? ' style="border-top:2px solid var(--line)"' : ''}>
+      <td class="name full" data-label="口径">${highlight ? '<b>' + label + '</b>' : label}</td>
+      <td class="num" data-label="期末市值">${money(x.terminal)}</td>
+      <td class="num" data-label="盈亏"><span class="${cls(x.pnl)}">${money(x.pnl, true)}</span></td>
+      <td class="num" data-label="累计收益率"><span class="${cls(x.cumulative)}">${pct(x.cumulative)}</span></td>
+      <td class="num" data-label="年化">${x.annualized === null ? '<span class="flat">—</span>' : `<span class="${cls(x.annualized)}">${pct(x.annualized)}</span>`}</td>
+    </tr>`;
+
+  box.innerHTML = `
+    <div class="bench-verdict">
+      <span class="bv-label">同样 ${money(m.invested)}、同样的时点，只换标的</span>
+      <span class="bv-diff ${verdictCls}">${diff > 0 ? '+' : ''}${diff}pp</span>
+      <span class="pill ${diff > 2 ? 'act-open' : diff < -2 ? 'act-close' : ''}">${esc(data.verdict || '—')}</span>
+    </div>
+    <div class="table-wrap">
+      <table class="responsive">
+        <thead><tr>
+          <th>口径</th><th class="num">期末市值</th><th class="num">盈亏</th>
+          <th class="num">累计收益率</th><th class="num">年化</th>
+        </tr></thead>
+        <tbody>
+          ${row('我的实际组合', m)}
+          ${row(`全买${esc(data.benchmark.name)}`, b, true)}
+        </tbody>
+      </table>
+    </div>
+    <div class="hint-box" style="margin-top:12px">
+      口径说明：把你每一笔买入的金额与日期原样搬到「${esc(data.benchmark.name)}」上，卖出也同日等额模拟。
+      这样差别只剩「买什么」这一项，排除了择时差异。
+      参考：${esc(data.benchmark.name)}区间本身涨跌 ${pct(data.index_return)}，估值日 ${data.asof}。
+    </div>`;
+}
+
+/* ---------------- 基准管理 ---------------- */
+
+async function loadBenchList() {
+  const box = $('#bench-list');
+  if (!box) return;
+  try {
+    const data = await api('/api/benchmarks');
+    state.benchmarks = (data.items || []).filter((b) => b.n > 0);
+    state.benchPresets = data.presets || [];
+    const items = data.items || [];
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">还没有基准数据，点右上角「更新全部基准」</div>';
+      return;
+    }
+    box.innerHTML = items.map((b) => `
+      <div class="fund-row">
+        <div class="fmain">
+          <div class="fname">${esc(b.name)}</div>
+          <div class="fcode">${b.secid} · ${b.n} 条 · 更新于 ${(b.updated_at || '').slice(0, 16)}</div>
+        </div>
+        <button class="icon-btn" data-bsync="${b.secid}" title="更新" style="font-size:13px;padding:3px 6px">↻</button>
+      </div>`).join('');
+    box.querySelectorAll('[data-bsync]').forEach((btn) => {
+      btn.addEventListener('click', () => syncBench(btn.dataset.bsync));
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+async function syncBench(secid) {
+  const preset = (state.benchPresets || []).find((p) => p.secid === secid);
+  try {
+    loading(true);
+    const r = await post('/api/benchmarks/sync', { secid, name: preset ? preset.name : null });
+    toast(`${r.name} 已更新 ${r.rows} 条`);
+    state.benchmarks = null;
+    await loadBenchList();
+    loadBenchmark();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    loading(false);
+  }
 }
 
 function renderPositions(positions) {
@@ -874,6 +1219,25 @@ function bindEvents() {
 
   // 添加基金
   $('#btn-add-fund').addEventListener('click', () => openModal('#modal-fund'));
+  $('#btn-reconcile').addEventListener('click', openReconcile);
+  $('#btn-sync-bench').addEventListener('click', async () => {
+    const presets = state.benchPresets || [];
+    if (!presets.length) { toast('没有可用的预设指数', true); return; }
+    const okList = [], bad = [];
+    loading(true);
+    for (const p of presets) {
+      try {
+        await post('/api/benchmarks/sync', { secid: p.secid, name: p.name });
+        okList.push(p.name);
+      } catch (e) { bad.push(p.name); }
+    }
+    loading(false);
+    toast(bad.length ? `已更新 ${okList.length} 个，失败 ${bad.length} 个` : `已更新 ${okList.length} 个基准`);
+    state.benchmarks = null;
+    await loadBenchList();
+    loadBenchmark();
+  });
+  $('#btn-do-reconcile').addEventListener('click', doReconcile);
   bindFundSearch();
   $('#btn-add-direct').addEventListener('click', () => {
     const code = $('#fund-code-direct').value.trim();

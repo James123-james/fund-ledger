@@ -72,6 +72,30 @@
 
     <div class="panel">
       <div class="panel-head">
+        <h2>收益质量</h2>
+        <span class="hint" id="returns-hint"></span>
+      </div>
+      <div id="returns"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>基准对比</h2>
+        <div class="range-group" id="bench-group"></div>
+      </div>
+      <div id="benchmark"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>收益归因</h2>
+        <span class="hint" id="attr-hint"></span>
+      </div>
+      <div id="attribution"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
         <h2>当前持仓</h2>
         <span class="hint" id="pos-count"></span>
       </div>
@@ -221,6 +245,27 @@
         <button class="btn ghost sm" id="btn-add-fund">+ 添加基金</button>
       </div>
       <div id="fund-list"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>基准指数</h2>
+        <button class="btn ghost sm" id="btn-sync-bench">更新全部基准</button>
+      </div>
+      <p class="muted">用于「同样现金流换成指数会怎样」的对比。数据来自东方财富指数日线。</p>
+      <div id="bench-list"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>对账校准</h2>
+        <button class="btn ghost sm" id="btn-reconcile">开始对账</button>
+      </div>
+      <p class="muted">
+        把这里算出的份额与成本单价，和你从支付宝／天天基金看到的数字比一比。
+        自建账本最怕静默错误：录错一位，之后所有盈亏都是错的，而且看不出来。
+      </p>
+      <div id="reconcile-result"></div>
     </div>
 
     <div class="panel">
@@ -390,6 +435,27 @@
       <div class="spacer"></div>
       <button class="btn ghost" data-close>取消</button>
       <button class="btn primary" id="btn-save-tpl">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 对账弹窗 -->
+<div class="modal-mask" id="modal-reconcile" hidden>
+  <div class="modal" style="max-width:560px">
+    <div class="modal-head">
+      <h2>对账校准</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <div class="hint-box" style="margin-bottom:14px">
+        填你从平台上看到的数字，留空表示该项不比对。差异超过
+        <span id="rec-tol">1</span>% 会标出来，但不会自动改动你的记录。
+      </div>
+      <div id="reconcile-form"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close>取消</button>
+      <button class="btn primary" id="btn-do-reconcile">比对</button>
     </div>
   </div>
 </div>

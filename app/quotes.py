@@ -280,3 +280,77 @@ def sync_fund(conn, code, full=False):
     rows = fetch_latest_nav(code, pages=2)
     n = save_nav(conn, code, rows)
     return {"code": code, "added": n, "mode": "incremental"}
+
+
+# ---------------------------------------------------------------- 指数基准
+
+# 常用指数，secid 规则：1.=上交所，0.=深交所
+INDEX_PRESETS = [
+    {"secid": "1.000300", "name": "沪深300"},
+    {"secid": "1.000905", "name": "中证500"},
+    {"secid": "1.000852", "name": "中证1000"},
+    {"secid": "1.000012", "name": "国债指数"},
+    {"secid": "1.000922", "name": "中证红利"},
+    {"secid": "0.399006", "name": "创业板指"},
+    {"secid": "1.000001", "name": "上证指数"},
+]
+
+
+def fetch_index(secid):
+    """抓取指数全量日线。返回 (name, [{date, close}])。
+
+    用东方财富的 K 线接口，一次请求拿全部历史，不需要分页。
+    fqt=1 表示前复权，指数本身无复权概念，取 1 保证与行情软件一致。
+    """
+    url = (
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        f"?secid={secid}&fields1=f1,f58&fields2=f51,f53&klt=101&fqt=1"
+        "&beg=0&end=20500101"
+    )
+    headers = dict(HEADERS)
+    headers["Referer"] = "https://quote.eastmoney.com/"
+    text = _get(url, headers=headers)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        raise QuoteError(f"指数接口返回非 JSON：{secid}")
+
+    d = data.get("data")
+    if not d or not d.get("klines"):
+        raise QuoteError(f"未找到指数 {secid}，请检查 secid")
+
+    rows = []
+    for line in d["klines"]:
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            rows.append({"date": parts[0], "close": float(parts[1])})
+        except ValueError:
+            continue
+    if not rows:
+        raise QuoteError(f"指数 {secid} 无有效数据")
+    return d.get("name") or secid, rows
+
+
+def save_index(conn, secid, name, rows):
+    conn.execute(
+        "INSERT INTO benchmarks (secid, name, updated_at) VALUES (?,?,datetime('now')) "
+        "ON CONFLICT(secid) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+        (secid, name),
+    )
+    conn.executemany(
+        "INSERT INTO benchmark_nav (secid, date, close) VALUES (?,?,?) "
+        "ON CONFLICT(secid, date) DO UPDATE SET close = excluded.close",
+        [(secid, r["date"], r["close"]) for r in rows],
+    )
+    conn.commit()
+    return len(rows)
+
+
+def sync_index(conn, secid, name=None):
+    """同步指数。name 为空时用接口返回的名称，再退回 secid。"""
+    api_name, rows = fetch_index(secid)
+    final = name or (api_name if api_name and not api_name.startswith(tuple("0123456789")) else secid)
+    n = save_index(conn, secid, final, rows)
+    return {"secid": secid, "name": final, "rows": n}
