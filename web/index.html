@@ -24,6 +24,7 @@
 <nav class="tabs" id="tabs">
   <button class="tab active" data-view="overview">总览</button>
   <button class="tab" data-view="txns">操作流水</button>
+  <button class="tab" data-view="sip">定投计划</button>
   <button class="tab" data-view="analysis">配置分析</button>
   <button class="tab" data-view="export">导出</button>
   <button class="tab" data-view="settings">设置</button>
@@ -126,6 +127,25 @@
     <div class="panel flush">
       <div id="txns"></div>
     </div>
+  </section>
+
+  <!-- ============ 定投计划 ============ -->
+  <section class="view" id="view-sip">
+    <div class="toolbar">
+      <div class="hint" style="flex:1">计划是持续规则。每次打开或点「补生成」，会把到期的那几期写成正式流水，已存在的自动跳过。</div>
+      <button class="btn ghost sm" id="btn-sip-runall">补生成全部</button>
+      <button class="btn primary sm" id="btn-sip-new">+ 新建计划</button>
+    </div>
+    <div id="sip-plans"></div>
+  </section>
+
+  <!-- ============ 单基金详情 ============ -->
+  <section class="view" id="view-fund">
+    <div class="detail-head">
+      <button class="btn ghost sm" id="btn-fund-back">← 返回</button>
+      <div class="detail-title" id="fund-title"></div>
+    </div>
+    <div id="fund-body"></div>
   </section>
 
   <!-- ============ 配置分析 ============ -->
@@ -294,6 +314,7 @@
 <nav class="bottom-nav" id="bottom-nav">
   <button class="bn active" data-view="overview"><span>总览</span></button>
   <button class="bn" data-view="txns"><span>流水</span></button>
+  <button class="bn" data-view="sip"><span>定投</span></button>
   <button class="bn" data-view="analysis"><span>配置</span></button>
   <button class="bn" data-view="export"><span>导出</span></button>
   <button class="bn" data-view="settings"><span>设置</span></button>
@@ -456,6 +477,65 @@
     <div class="modal-foot">
       <button class="btn ghost" data-close>取消</button>
       <button class="btn primary" id="btn-do-reconcile">比对</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 定投计划弹窗 -->
+<div class="modal-mask" id="modal-sip-plan" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="sip-modal-title">新建定投计划</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="sp-id">
+      <div class="field">
+        <label>基金</label>
+        <select id="sp-code"></select>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label>周期</label>
+          <select id="sp-freq">
+            <option value="daily">每个交易日</option>
+            <option value="weekly">每周</option>
+            <option value="monthly" selected>每月</option>
+          </select>
+        </div>
+        <div class="field" id="sp-weekday-wrap" hidden>
+          <label>星期几</label>
+          <select id="sp-weekday">
+            <option value="0">周一</option>
+            <option value="1">周二</option>
+            <option value="2">周三</option>
+            <option value="3">周四</option>
+            <option value="4">周五</option>
+          </select>
+        </div>
+        <div class="field" id="sp-monthday-wrap">
+          <label>每月几号</label>
+          <input type="number" id="sp-monthday" min="1" max="31" value="15">
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label>每期金额（元）</label><input type="number" id="sp-amount" step="0.01" placeholder="如 500"></div>
+        <div class="field"><label>费率（%）</label><input type="number" id="sp-fee" step="0.01" value="0.15"></div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label>起始日期</label><input type="date" id="sp-start"></div>
+        <div class="field"><label>结束日期（可空）</label><input type="date" id="sp-end"></div>
+      </div>
+      <div class="field"><label>备注</label><input type="text" id="sp-note" placeholder="如 每月发薪日定投"></div>
+      <label class="checkbox-line"><input type="checkbox" id="sp-enabled" checked><span>启用</span></label>
+      <div class="hint-box">扣款日落在周末或法定假日时，自动顺延到下一个交易日。已存在的同基金同日定投记录不会重复生成。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost danger" id="btn-del-sip" hidden>删除计划</button>
+      <div class="spacer"></div>
+      <button class="btn ghost" data-close>取消</button>
+      <button class="btn primary" id="btn-save-sip">保存</button>
     </div>
   </div>
 </div>

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS txns (
     shares     REAL NOT NULL DEFAULT 0,  -- 确认份额
     nav        REAL,                     -- 成交净值
     fee        REAL NOT NULL DEFAULT 0,  -- 手续费（申购费/赎回费）
+    plan_id    INTEGER,                  -- 来自哪条定投计划（手动录入为 NULL）
     note       TEXT,
     created_at TEXT NOT NULL
 );
@@ -101,6 +102,23 @@ CREATE TABLE IF NOT EXISTS benchmark_nav (
     PRIMARY KEY (secid, date)
 );
 CREATE INDEX IF NOT EXISTS idx_bnav_date ON benchmark_nav(date);
+
+CREATE TABLE IF NOT EXISTS sip_plans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    code        TEXT NOT NULL,
+    amount      REAL NOT NULL,            -- 每期金额（扣款总额）
+    fee_rate    REAL NOT NULL DEFAULT 0,  -- 申购费率 %
+    freq        TEXT NOT NULL,            -- daily / weekly / monthly
+    weekday     INTEGER,                  -- 0=周一 … 4=周五（freq=daily 时忽略）
+    monthday    INTEGER,                  -- 1-31（freq=monthly 用）
+    start_date  TEXT NOT NULL,
+    end_date    TEXT,                     -- 空表示长期有效
+    last_run    TEXT,                     -- 上次补生成到的日期
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    note        TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sip_code ON sip_plans(code);
 
 CREATE TABLE IF NOT EXISTS settings (
     k TEXT PRIMARY KEY,
@@ -154,12 +172,29 @@ def connect(db_path):
 
 
 def init(db_path):
-    """建表并写入内置模板（幂等）。"""
+    """建表、补列、写入内置模板（幂等）。"""
     conn = connect(db_path)
     conn.executescript(SCHEMA)
     conn.commit()
+    _migrate(conn)
     _seed_templates(conn)
     return conn
+
+
+def _migrate(conn):
+    """给旧库补新增的列。
+
+    CREATE TABLE IF NOT EXISTS 对已存在的表不生效，新增字段必须单独 ALTER。
+    这里全部用「查一下有没有，没有才加」的方式，重复执行安全。
+    """
+    def cols(table):
+        return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    txn_cols = cols("txns")
+    if "plan_id" not in txn_cols:
+        conn.execute("ALTER TABLE txns ADD COLUMN plan_id INTEGER")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_plan ON txns(plan_id)")
+        conn.commit()
 
 
 def _seed_templates(conn):

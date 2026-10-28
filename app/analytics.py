@@ -612,3 +612,152 @@ def benchmark_series(conn, secid="1.000300", date_from=None, date_to=None):
             for r in rows
         ]
     }
+
+
+# ---------------------------------------------------------------- 单基金详情
+
+
+def fund_detail(conn, code, date_from=None, date_to=None):
+    """单只基金的完整视图：净值曲线 + 买卖点 + 该基金自己的统计。
+
+    买卖点是这个功能的核心：把每笔操作标在净值曲线上，直接看出发
+    生在相对高位还是低位。追高与割肉不需要别人判断，图上自己就说话了。
+    """
+    from . import engine
+
+    fund = conn.execute("SELECT * FROM funds WHERE code = ?", (code,)).fetchone()
+    if not fund:
+        return {"error": f"基金 {code} 不在基金库中"}
+    fund = dict(fund)
+
+    asof = analytics_asof(conn, date_to)
+    sql = "SELECT date, nav, acc_nav, pct FROM nav WHERE code = ?"
+    args = [code]
+    if date_from:
+        sql += " AND date >= ?"
+        args.append(date_from)
+    sql += " ORDER BY date"
+    navs = [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+    if not navs:
+        return {"error": f"基金 {code} 没有净值数据"}
+
+    closes = {r["date"]: float(r["nav"]) for r in navs if r["nav"] is not None}
+    if not closes:
+        return {"error": f"基金 {code} 净值数据异常"}
+    lo, hi = min(closes.values()), max(closes.values())
+
+    # 全部流水（不受区间限制，标注位置需要参照）
+    txns = engine.load_txns(conn, code=code, date_to=asof)
+
+    markers = []
+    for t in txns:
+        nav = float(t["nav"]) if t.get("nav") else None
+        if nav is None:
+            nav = _close_before(closes, t["date"])
+        if nav is None:
+            continue
+        # 该笔操作日的净值在区间内的百分位：越低说明买在相对底部
+        percentile = (nav - lo) / (hi - lo) * 100 if hi > lo else 50.0
+        markers.append(
+            {
+                "id": t["id"],
+                "date": t["date"],
+                "action": t["action"],
+                "action_name": db.ACTIONS.get(t["action"], t["action"]),
+                "side": "buy" if t["action"] in db.BUY_ACTIONS else (
+                    "sell" if t["action"] in db.SELL_ACTIONS else "other"
+                ),
+                "amount": round(float(t["amount"] or 0), 2),
+                "shares": round(float(t["shares"] or 0), 4),
+                "nav": round(nav, 4),
+                "percentile": round(percentile, 1),
+                "note": t.get("note") or "",
+            }
+        )
+
+    # 只保留落在展示区间内的标记
+    if date_from or date_to:
+        markers = [
+            m for m in markers
+            if (not date_from or m["date"] >= date_from)
+            and (not date_to or m["date"] <= date_to)
+        ]
+
+    pos = {p["code"]: p for p in engine.build_positions(conn, date_to=date_to)}.get(code)
+    ret = irr_report(conn, code=code, date_to=date_to)
+
+    buys = [m for m in markers if m["side"] == "buy"]
+    sells = [m for m in markers if m["side"] == "sell"]
+
+    def _avg_percentile(items):
+        return round(sum(m["percentile"] for m in items) / len(items), 1) if items else None
+
+    # 择时质量：买入平均分位越低越好（买在低位）
+    timing = {
+        "buy_avg_percentile": _avg_percentile(buys),
+        "sell_avg_percentile": _avg_percentile(sells),
+        "buy_count": len(buys),
+        "sell_count": len(sells),
+    }
+
+    # 货币基金净值恒为 1，分位没有意义，直接标注而不是给一个假的 50%
+    if fund["is_money"]:
+        timing["buy_avg_percentile"] = None
+        timing["sell_avg_percentile"] = None
+        timing["verdict"] = "货币基金净值恒定，分位无意义"
+    elif timing["buy_avg_percentile"] is not None and timing["sell_avg_percentile"] is not None:
+        spread = timing["sell_avg_percentile"] - timing["buy_avg_percentile"]
+        if spread > 10:
+            timing["verdict"] = "卖点明显高于买点，择时正向"
+        elif spread < -10:
+            timing["verdict"] = "卖点低于买点，存在高买低卖"
+        else:
+            timing["verdict"] = "买卖点位置接近，择时影响有限"
+    elif timing["buy_avg_percentile"] is not None:
+        bp = timing["buy_avg_percentile"]
+        if timing["buy_count"] == 1:
+            # 只有一笔买入时谈"分散"没有依据，直接报位置
+            if bp >= 80:
+                timing["verdict"] = f"仅一笔买入，位于净值 {bp}% 高位"
+            elif bp <= 20:
+                timing["verdict"] = f"仅一笔买入，位于净值 {bp}% 低位"
+            else:
+                timing["verdict"] = f"仅一笔买入，位于净值 {bp}% 中段"
+        elif bp > 70:
+            timing["verdict"] = "买入多集中在净值高位区间"
+        elif bp < 30:
+            timing["verdict"] = "买入多集中在净值低位区间"
+        else:
+            timing["verdict"] = "买入位置较为分散"
+    else:
+        timing["verdict"] = None
+
+    return {
+        "fund": {
+            "code": fund["code"],
+            "name": fund["name"],
+            "category": fund["category"],
+            "category_name": db.CATEGORY_NAMES.get(fund["category"], "其他"),
+            "is_money": bool(fund["is_money"]),
+        },
+        "asof": asof,
+        "nav": navs,
+        "range": {"min": round(lo, 4), "max": round(hi, 4)},
+        "markers": markers,
+        "position": pos,
+        "returns": ret,
+        "timing": timing,
+    }
+
+
+def analytics_asof(conn, date_to=None):
+    """与 irr 用同一个估值日口径。"""
+    return valuation_date(conn, date_to)
+
+
+def _close_before(closes, ds):
+    if ds in closes:
+        return closes[ds]
+    prior = [d for d in closes if d <= ds]
+    return closes[max(prior)] if prior else None

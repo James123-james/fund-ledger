@@ -321,6 +321,42 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
         )
         L.append("")
 
+    # 3.4 择时质量
+    from . import engine as _eng
+
+    L.append("### 3.4 择时质量（买卖点的净值分位）")
+    L.append("")
+    L.append(
+        "分位＝该笔成交净值在展示区间最低与最高净值之间的位置。0% 是区间最低点，"
+        "100% 是最高点。买入分位越低越好；卖出分位应高于买入分位。"
+    )
+    L.append("")
+    timing_rows = []
+    for p in _eng.build_positions(conn):
+        if p["total_buy"] <= 0.01:
+            continue
+        det = _an.fund_detail(conn, p["code"])
+        if det.get("error"):
+            continue
+        t = det["timing"]
+        if t["buy_count"] == 0 and t["sell_count"] == 0:
+            continue
+        timing_rows.append((p, t, det["range"]))
+    if timing_rows:
+        L.append("| 代码 | 名称 | 买入笔数 | 买入平均分位 | 卖出笔数 | 卖出平均分位 | 择时结论 |")
+        L.append("| --- | --- | ---: | ---: | ---: | ---: | --- |")
+        for p, t, rng in timing_rows:
+            bp = f"{t['buy_avg_percentile']}%" if t["buy_avg_percentile"] is not None else "—"
+            sp = f"{t['sell_avg_percentile']}%" if t["sell_avg_percentile"] is not None else "—"
+            L.append(
+                f"| {p['code']} | {p['name']} | {t['buy_count']} | {bp} | "
+                f"{t['sell_count']} | {sp} | {t['verdict'] or '—'} |"
+            )
+        L.append("")
+    else:
+        L.append("_暂无可评估的买卖点。_")
+        L.append("")
+
     # 4. 操作流水
     L.append("## 4. 操作流水")
     L.append("")
