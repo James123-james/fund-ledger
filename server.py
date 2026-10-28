@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app import db, engine, exporter, quotes  # noqa: E402
+from app import analytics, db, engine, exporter, quotes  # noqa: E402
 
 WEB_DIR = os.path.join(BASE_DIR, "web")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -345,6 +345,11 @@ def handle_api(method, path, query, body, conn):
         tid = (query.get("template_id") or [None])[0]
         extra = to_num((query.get("extra_cash") or [None])[0], 0.0)
         return 200, engine.analyze_allocation(conn, tid, extra), {}
+
+    # ---- 收益率分析
+    if path == "/api/returns" and method == "GET":
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, analytics.irr_table(conn, dt), {}
 
     # ---- 模板
     if path == "/api/templates" and method == "GET":

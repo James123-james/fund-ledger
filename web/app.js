@@ -130,6 +130,7 @@ async function loadOverview() {
     renderStats(data.summary);
     renderPositions(data.positions || []);
     renderChart((data.series && data.series.points) || []);
+    loadReturns();
   } catch (e) {
     toast(e.message, true);
   }
@@ -147,6 +148,75 @@ function renderStats(s) {
     `浮动 ${money(s.unrealized, true)} · 已实现 ${money(s.realized, true)}`, cls(s.total_pnl));
   set('#s-today', money(s.today_pnl, true), pct(s.today_pct), cls(s.today_pnl));
   set('#s-realized', money(s.realized, true), `累计手续费 ${money(s.total_fee)}`, cls(s.realized));
+}
+
+/* ---------------- 收益质量：XIRR 年化 ---------------- */
+
+async function loadReturns() {
+  try {
+    const data = await api('/api/returns');
+    renderReturns(data);
+  } catch (e) {
+    const box = $('#returns');
+    if (box) box.innerHTML = `<div class="empty">收益率计算失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderReturns(data) {
+  const box = $('#returns');
+  if (!box) return;
+  const rows = (data.rows || []).filter((r) => r.invested > 0.01);
+  const p = data.portfolio || {};
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">还没有足够数据计算收益率</div>';
+    $('#returns-hint').textContent = '';
+    return;
+  }
+
+  $('#returns-hint').textContent = p.asof ? `估值日 ${p.asof}` : '';
+
+  const cell = (v) => (v === null || v === undefined ? '<span class="flat">—</span>' : `<span class="${cls(v)}">${pct(v)}</span>`);
+
+  const trs = rows.map((r) => `<tr>
+      <td class="name full" data-label="基金">${esc(r.name)}<span class="code">${r.code}</span></td>
+      <td class="num" data-label="投入">${money(r.invested)}</td>
+      <td class="num" data-label="盈亏"><span class="${cls(r.pnl)}">${money(r.pnl, true)}</span></td>
+      <td class="num" data-label="累计收益率">${cell(r.cumulative)}</td>
+      <td class="num" data-label="年化 XIRR">${r.annualized === null ? '<span class="flat" title="' + esc(r.reason || '') + '">—</span>' : cell(r.annualized)}</td>
+      <td class="num hide-m" data-label="持有天数">${r.days}</td>
+    </tr>`).join('');
+
+  const pAnn = p.annualized === null || p.annualized === undefined
+    ? `<span class="flat">—</span>`
+    : `<span class="${cls(p.annualized)}">${pct(p.annualized)}</span>`;
+  const pCum = p.cumulative === null || p.cumulative === undefined
+    ? `<span class="flat">—</span>`
+    : `<span class="${cls(p.cumulative)}">${pct(p.cumulative)}</span>`;
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="responsive">
+        <thead><tr>
+          <th>基金</th><th class="num">投入</th><th class="num">盈亏</th>
+          <th class="num">累计收益率</th><th class="num">年化 XIRR</th><th class="num">持有天数</th>
+        </tr></thead>
+        <tbody>${trs}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--line)">
+            <td class="name full" data-label="组合合计"><b>组合合计</b></td>
+            <td class="num" data-label="投入"><b>${money(p.invested)}</b></td>
+            <td class="num" data-label="盈亏"><b><span class="${cls(p.pnl)}">${money(p.pnl, true)}</span></b></td>
+            <td class="num" data-label="累计收益率"><b>${pCum}</b></td>
+            <td class="num" data-label="年化 XIRR"><b>${pAnn}</b></td>
+            <td class="num hide-m" data-label="持有天数"><b>${p.days || 0}</b></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="hint-box" style="margin-top:12px">
+      累计收益率 = 盈亏 ÷ 投入，不反映时间；年化 XIRR 按每笔现金流的实际发生日折现，是定投场景下更诚实的口径。
+      持有不足 ${90} 天的基金不给年化——样本太短，折算成年化会得到 −90% 之类的失真数字。
+    </div>`;
 }
 
 function renderPositions(positions) {
