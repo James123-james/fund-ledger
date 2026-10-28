@@ -135,7 +135,12 @@ def solve_irr(flows):
         if val is None:
             prev_rate, prev_val = None, None
             continue
-        if prev_val is not None and (prev_val == 0 or prev_val * val < 0):
+        # 正好命中根，直接返回。必须放在符号变化判断之前：
+        # 否则 prev_val 被置成 0 后，下一格的 prev_val*val 仍是 0，
+        # 判不出符号变化，二分会在错误的区间里收敛到边界值
+        if abs(val) < 1e-9:
+            return rate
+        if prev_val is not None and prev_val * val < 0:
             lo, hi = prev_rate, rate
             f_lo = prev_val
             for _ in range(200):
