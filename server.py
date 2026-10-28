@@ -737,18 +737,35 @@ def lan_ip():
         return None
 
 
+def bind_with_fallback(host, start_port, tries=20):
+    """从 start_port 起依次尝试绑定，返回 (server, 实际端口)。
+
+    全部失败时返回 (None, start_port)。
+    """
+    for i in range(tries):
+        port = start_port + i
+        if port > 65535:
+            break
+        try:
+            return Server((host, port), Handler), port
+        except OSError:
+            continue
+    return None, start_port
+
+
 def main():
-    global DB_PATH, OPEN_BROWSER
+    global DB_PATH, OPEN_BROWSER, DATA_DIR
 
     ap = argparse.ArgumentParser(description="基金台账 · 本地服务")
     ap.add_argument("--host", default="127.0.0.1", help="监听地址，0.0.0.0 允许局域网访问")
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--data", default=None, help="数据目录，默认 ./data")
     ap.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
+    ap.add_argument("--strict-port", action="store_true",
+                    help="端口被占用时直接报错，不自动换端口")
     args = ap.parse_args()
 
     if args.data:
-        global DATA_DIR
         DATA_DIR = os.path.abspath(args.data)
     DB_PATH = os.path.join(DATA_DIR, "fund.db")
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -756,13 +773,26 @@ def main():
     db.init(DB_PATH).close()
     OPEN_BROWSER = not args.no_browser
 
-    url = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}"
-    try:
-        httpd = Server((args.host, args.port), Handler)
-    except OSError as exc:
-        print(f"[错误] 端口 {args.port} 无法监听：{exc}")
-        print("       换个端口试试：python server.py --port 8899")
-        sys.exit(1)
+    if args.strict_port:
+        try:
+            httpd = Server((args.host, args.port), Handler)
+            port = args.port
+        except OSError as exc:
+            print(f"[错误] 端口 {args.port} 无法监听：{exc}")
+            print("       去掉 --strict-port 可自动改用其它端口。")
+            sys.exit(1)
+    else:
+        # 端口被占用时自动往后找，而不是直接退出。常见于上次没关干净，
+        # 或同时开着演示库与正式库两个实例。
+        httpd, port = bind_with_fallback(args.host, args.port)
+        if httpd is None:
+            print(f"[错误] 从 {args.port} 起的 20 个端口都被占用，无法启动。")
+            print("       先关掉之前的窗口，或用 --port 指定其它端口。")
+            sys.exit(1)
+        if port != args.port:
+            print(f"[提示] 端口 {args.port} 被占用（可能已有实例在跑），已自动改用 {port}。")
+
+    url = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{port}"
 
     print("")
     print("  基金台账已启动")
@@ -770,7 +800,7 @@ def main():
     if args.host == "0.0.0.0":
         ip = lan_ip()
         if ip:
-            print(f"  手机访问（同一 WiFi）：http://{ip}:{args.port}")
+            print(f"  手机访问（同一 WiFi）：http://{ip}:{port}")
     print(f"  数据文件：{DB_PATH}")
     print("  关闭窗口或按 Ctrl+C 停止")
     print("")
