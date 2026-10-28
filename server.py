@@ -351,6 +351,10 @@ def handle_api(method, path, query, body, conn):
         dt = parse_date((query.get("to") or [None])[0])
         return 200, analytics.irr_table(conn, dt), {}
 
+    if path == "/api/attribution" and method == "GET":
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, analytics.attribution(conn, dt), {}
+
     # ---- 模板
     if path == "/api/templates" and method == "GET":
         return 200, {"items": engine.load_templates(conn)}, {}

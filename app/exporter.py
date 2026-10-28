@@ -212,7 +212,9 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
     from . import analytics as _an
 
     ret = _an.irr_table(conn)
-    L.append("## 3. 收益质量（累计 vs 年化）")
+    L.append("## 3. 收益质量")
+    L.append("")
+    L.append("### 3.1 累计收益率 vs 年化 XIRR")
     L.append("")
     L.append(
         "**累计收益率** = 盈亏 ÷ 投入，不反映时间；**年化 XIRR** 按每笔现金流的实际发生日折现。"
@@ -244,6 +246,48 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
         L.append("")
     else:
         L.append("_暂无可计算收益率的持仓。_")
+        L.append("")
+
+    # 3.2 收益归因
+    attr = _an.attribution(conn)
+    L.append("### 3.2 收益归因")
+    L.append("")
+    if attr["rows"]:
+        asum = attr["summary"]
+        L.append(
+            f"组合总收益率 {_pct(asum['return_pct'])}，"
+            f"共 {asum['gainers']} 只盈利、{asum['losers']} 只亏损。"
+            f"亏损合计 {_money(attr['total_loss'])}，盈利合计 {_money(attr['total_gain'])}。"
+        )
+        L.append("")
+        L.append("| 代码 | 名称 | 类别 | 投入 | 浮动盈亏 | 已实现 | 合计盈亏 | 贡献(pp) | 占全部亏损 |")
+        L.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for r in attr["rows"]:
+            pp = f"{r['contribution_pp']:+.3f}" if r["contribution_pp"] is not None else "—"
+            shl = f"{r['share_of_loss']:.1f}%" if r["share_of_loss"] is not None else "—"
+            L.append(
+                f"| {r['code']} | {r['name']} | {r['category_name']} | {_money(r['invested'])} | "
+                f"{_money(r['unrealized'])} | {_money(r['realized'])} | {_money(r['pnl'])} | "
+                f"{pp} | {shl} |"
+            )
+        L.append("")
+        L.append("**按资产类别汇总**")
+        L.append("")
+        L.append("| 类别 | 只数 | 投入 | 盈亏 | 收益率 |")
+        L.append("| --- | ---: | ---: | ---: | ---: |")
+        for c in attr["by_category"]:
+            L.append(
+                f"| {c['category_name']} | {c['count']} | {_money(c['invested'])} | "
+                f"{_money(c['pnl'])} | {_pct(c['return_pct'])} |"
+            )
+        L.append("")
+        L.append(
+            "> 贡献（pp）＝ 该基金盈亏 ÷ 组合总投入，各基金相加恰好等于组合总收益率，"
+            "可直接读出「谁把收益拉低了多少个百分点」。"
+        )
+        L.append("")
+    else:
+        L.append("_暂无可归因的持仓。_")
         L.append("")
 
     # 4. 操作流水

@@ -131,6 +131,7 @@ async function loadOverview() {
     renderPositions(data.positions || []);
     renderChart((data.series && data.series.points) || []);
     loadReturns();
+    loadAttribution();
   } catch (e) {
     toast(e.message, true);
   }
@@ -216,6 +217,71 @@ function renderReturns(data) {
     <div class="hint-box" style="margin-top:12px">
       累计收益率 = 盈亏 ÷ 投入，不反映时间；年化 XIRR 按每笔现金流的实际发生日折现，是定投场景下更诚实的口径。
       持有不足 ${90} 天的基金不给年化——样本太短，折算成年化会得到 −90% 之类的失真数字。
+    </div>`;
+}
+
+/* ---------------- 收益归因 ---------------- */
+
+async function loadAttribution() {
+  try {
+    const data = await api('/api/attribution');
+    renderAttribution(data);
+  } catch (e) {
+    const box = $('#attribution');
+    if (box) box.innerHTML = `<div class="empty">归因计算失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderAttribution(data) {
+  const box = $('#attribution');
+  if (!box) return;
+  const rows = (data.rows || []).filter((r) => r.invested > 0.01);
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">还没有足够数据做归因</div>';
+    $('#attr-hint').textContent = '';
+    return;
+  }
+  const s = data.summary || {};
+  $('#attr-hint').textContent = `${s.gainers || 0} 只盈利 · ${s.losers || 0} 只亏损`;
+
+  const maxAbs = Math.max(...rows.map((r) => Math.abs(r.pnl)), 1);
+
+  const bars = rows.map((r) => {
+    const w = (Math.abs(r.pnl) / maxAbs) * 100;
+    const positive = r.pnl >= 0;
+    return `<div class="alloc-row" style="margin-bottom:11px">
+      <div class="alloc-head">
+        <span class="alloc-name">${esc(r.name)}<span class="code" style="font-size:11px;color:var(--ink-3);margin-left:6px">${r.code}</span></span>
+        <span class="alloc-nums">
+          <span class="${cls(r.pnl)}">${money(r.pnl, true)}</span>
+          ${r.contribution_pp !== null ? ` <span class="flat">${r.contribution_pp > 0 ? '+' : ''}${r.contribution_pp.toFixed(2)}pp</span>` : ''}
+        </span>
+      </div>
+      <div class="alloc-track" style="height:9px">
+        <div class="alloc-fill" style="width:${Math.max(w, 0.8)}%;background:${positive ? 'var(--up)' : 'var(--down)'};opacity:.8"></div>
+      </div>
+      <div class="alloc-foot">
+        <span>投入 ${money(r.invested)} ｜ 收益率 <span class="${cls(r.closed ? (r.realized / r.invested * 100) : r.unrealized_pct)}">${r.closed ? pct(r.realized / r.invested * 100) : pct(r.unrealized_pct)}</span></span>
+        <span>${r.share_of_loss !== null ? `占全部亏损 ${r.share_of_loss.toFixed(1)}%` : ''}${r.closed ? ' 已清仓' : ''}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const cats = (data.by_category || []).map((c) =>
+    `<div class="reb-item">
+      <span>${esc(c.category_name)} <span style="color:var(--ink-3);font-size:11.5px">${c.count} 只</span></span>
+      <span class="amt"><span class="${cls(c.pnl)}">${money(c.pnl, true)}</span> <span class="flat" style="font-size:11.5px">${pct(c.return_pct)}</span></span>
+    </div>`).join('');
+
+  box.innerHTML = `
+    ${bars}
+    <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line)">
+      <div style="font-size:12.5px;font-weight:650;margin-bottom:9px">按资产类别</div>
+      ${cats}
+    </div>
+    <div class="hint-box" style="margin-top:14px">
+      贡献（pp）＝ 该基金盈亏 ÷ 组合总投入，各基金相加恰好等于组合总收益率 ${pct(s.return_pct)}。
+      「占全部亏损」看的是单只基金在亏损总额中的权重——小仓位高跌幅与大仓位小跌幅，改进方向不同。
     </div>`;
 }
 
