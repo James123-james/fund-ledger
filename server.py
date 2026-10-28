@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app import analytics, db, engine, exporter, quotes  # noqa: E402
+from app import analytics, db, engine, exporter, quotes, sip  # noqa: E402
 
 WEB_DIR = os.path.join(BASE_DIR, "web")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -380,6 +380,39 @@ def handle_api(method, path, query, body, conn):
         secid = (query.get("secid") or ["1.000300"])[0]
         dt = parse_date((query.get("to") or [None])[0])
         return 200, analytics.benchmark_compare(conn, secid, dt), {}
+
+    # ---- 定投计划
+    if path == "/api/sip-plans" and method == "GET":
+        return 200, {"items": sip.list_plans(conn)}, {}
+
+    if path == "/api/sip-plans" and method == "POST":
+        pid = sip.save_plan(conn, None, body)
+        return 201, {"id": pid, "plan": next(
+            (p for p in sip.list_plans(conn) if p["id"] == pid), None)}, {}
+
+    m = re.fullmatch(r"/api/sip-plans/(\d+)", path)
+    if m:
+        pid = int(m.group(1))
+        if method == "PUT":
+            sip.save_plan(conn, pid, body)
+            return 200, {"id": pid}, {}
+        if method == "DELETE":
+            sip.delete_plan(conn, pid)
+            return 200, {"ok": True}, {}
+
+    m = re.fullmatch(r"/api/sip-plans/(\d+)/run", path)
+    if m and method == "POST":
+        return 200, sip.run_plan(conn, int(m.group(1)), body.get("until")), {}
+
+    if path == "/api/sip-plans/run-all" and method == "POST":
+        return 200, sip.run_all(conn, body.get("until")), {}
+
+    # ---- 单基金详情
+    m = re.fullmatch(r"/api/funds/(\d{6})/detail", path)
+    if m and method == "GET":
+        df = parse_date((query.get("from") or [None])[0])
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, analytics.fund_detail(conn, m.group(1), df, dt), {}
 
     # ---- 模板
     if path == "/api/templates" and method == "GET":

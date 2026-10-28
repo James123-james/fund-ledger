@@ -16,6 +16,8 @@ const state = {
   curTpl: null,
   chartRange: '1y',
   txnFilter: { from: '', to: '', code: '' },
+  sipPlans: [],
+  fundDetail: null,
 };
 
 /* ---------------- 格式化 ---------------- */
@@ -111,6 +113,7 @@ function switchView(name) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (name === 'txns') loadTxns();
   if (name === 'analysis') loadAnalysis();
+  if (name === 'sip') loadSipPlans();
   if (name === 'settings') { loadFunds(); loadBenchList(); }
   if (name === 'export') prepareExport();
 }
@@ -284,6 +287,336 @@ function renderAttribution(data) {
       贡献（pp）＝ 该基金盈亏 ÷ 组合总投入，各基金相加恰好等于组合总收益率 ${pct(s.return_pct)}。
       「占全部亏损」看的是单只基金在亏损总额中的权重——小仓位高跌幅与大仓位小跌幅，改进方向不同。
     </div>`;
+}
+
+/* 启动时自动补齐定投计划，只在真的生成了记录时提示，避免打扰 */
+async function autoRunSipPlans() {
+  try {
+    const r = await post('/api/sip-plans/run-all', {});
+    if (r.total_created > 0) {
+      toast(`定投计划已自动补齐 ${r.total_created} 条记录`);
+      await loadOverview();
+    }
+  } catch (e) {
+    /* 自动任务失败不打扰用户，手动点补生成会看到具体错误 */
+  }
+}
+
+/* ---------------- 定投计划 ---------------- */
+
+async function loadSipPlans() {
+  const box = $('#sip-plans');
+  if (!box) return;
+  try {
+    const data = await api('/api/sip-plans');
+    state.sipPlans = data.items || [];
+    renderSipPlans();
+  } catch (e) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderSipPlans() {
+  const box = $('#sip-plans');
+  const plans = state.sipPlans;
+  if (!plans.length) {
+    box.innerHTML = `<div class="empty"><b>还没有定投计划</b>
+      如果你在支付宝/天天基金设了「每交易日 10 元」这类持续扣款，可以建成计划，
+      之后每次打开工具会自动补齐到期记录，不必手录</div>`;
+    return;
+  }
+
+  const cards = plans.map((p) => `
+    <div class="panel sip-card ${p.enabled ? '' : 'off'}">
+      <div class="sip-head">
+        <div>
+          <div class="sip-name" data-detail="${p.code}" style="cursor:pointer">${esc(p.fund_name || p.code)}
+            <span class="code">${p.code}</span></div>
+          <div class="sip-meta">${esc(p.freq_name)} · ${money(p.amount)}/期 · 费率 ${p.fee_rate}%</div>
+        </div>
+        <div class="sip-status">
+          ${p.enabled ? '<span class="pill act-open">启用中</span>' : '<span class="pill">已停用</span>'}
+        </div>
+      </div>
+      <div class="sip-stats">
+        <div><span class="k">已生成</span><span class="v">${p.generated} 次</span></div>
+        <div><span class="k">起始</span><span class="v">${p.start_date}</span></div>
+        <div><span class="k">下次扣款</span><span class="v">${p.next_date || '—'}</span></div>
+      </div>
+      ${p.end_date ? `<div class="sip-note">结束于 ${p.end_date}</div>` : ''}
+      ${p.note ? `<div class="sip-note">${esc(p.note)}</div>` : ''}
+      <div class="sip-actions">
+        <button class="btn ghost sm" data-run="${p.id}">补生成</button>
+        <button class="btn ghost sm" data-edit="${p.id}">编辑</button>
+      </div>
+    </div>`).join('');
+
+  box.innerHTML = `<div class="sip-grid">${cards}</div>`;
+  bindSipActions(box);
+}
+
+function bindSipActions(box) {
+  box.querySelectorAll('[data-run]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      try {
+        loading(true);
+        const r = await post(`/api/sip-plans/${b.dataset.run}/run`, {});
+        if (r.error) toast(r.error, true);
+        else if (r.count) toast(`已生成 ${r.count} 条定投记录`);
+        else if (r.skipped && r.skipped.length) toast(`${r.skipped.length} 期已存在，未重复生成`);
+        else toast('没有到期的扣款日');
+        await loadSipPlans();
+        loadOverview();
+      } catch (e) { toast(e.message, true); } finally { loading(false); }
+    });
+  });
+  box.querySelectorAll('[data-edit]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const p = state.sipPlans.find((x) => String(x.id) === b.dataset.edit);
+      if (p) openSipModal(p);
+    });
+  });
+  box.querySelectorAll('[data-detail]').forEach((el) => {
+    el.addEventListener('click', () => openFundDetail(el.dataset.detail));
+  });
+}
+
+function openSipModal(plan) {
+  if (!state.funds.length) { toast('先在设置里添加基金', true); return; }
+  $('#sip-modal-title').textContent = plan ? '编辑定投计划' : '新建定投计划';
+  $('#sp-id').value = plan ? plan.id : '';
+  fillFundSelect($('#sp-code'), plan ? plan.code : state.funds[0].code);
+  $('#sp-freq').value = plan ? plan.freq : 'monthly';
+  $('#sp-weekday').value = plan && plan.weekday !== null ? String(plan.weekday) : '0';
+  $('#sp-monthday').value = plan && plan.monthday ? plan.monthday : 15;
+  $('#sp-amount').value = plan ? plan.amount : '';
+  $('#sp-fee').value = plan ? plan.fee_rate : 0.15;
+  $('#sp-start').value = plan ? plan.start_date : (state.meta.today || isoDate(new Date()));
+  $('#sp-end').value = plan && plan.end_date ? plan.end_date : '';
+  $('#sp-note').value = plan ? (plan.note || '') : '';
+  $('#sp-enabled').checked = plan ? !!plan.enabled : true;
+  $('#btn-del-sip').hidden = !plan;
+  syncSipFreqFields();
+  openModal('#modal-sip-plan');
+}
+
+function syncSipFreqFields() {
+  const f = $('#sp-freq').value;
+  $('#sp-weekday-wrap').hidden = f !== 'weekly';
+  $('#sp-monthday-wrap').hidden = f !== 'monthly';
+}
+
+/* ---------------- 单基金详情 ---------------- */
+
+async function openFundDetail(code) {
+  switchView('fund');
+  $('#fund-title').textContent = '加载中…';
+  $('#fund-body').innerHTML = '';
+  try {
+    loading(true);
+    const data = await api(`/api/funds/${code}/detail`);
+    state.fundDetail = data;
+    renderFundDetail(data);
+  } catch (e) {
+    $('#fund-body').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  } finally {
+    loading(false);
+  }
+}
+
+function renderFundDetail(d) {
+  const box = $('#fund-body');
+  if (d.error) {
+    $('#fund-title').textContent = '出错了';
+    box.innerHTML = `<div class="empty">${esc(d.error)}</div>`;
+    return;
+  }
+  const f = d.fund;
+  $('#fund-title').innerHTML = `${esc(f.name)} <span class="code">${f.code}</span>`;
+
+  const p = d.position;
+  const r = d.returns;
+  const t = d.timing;
+
+  const stat = (label, value, sub, klass) => `
+    <div class="stat">
+      <div class="stat-label">${label}</div>
+      <div class="stat-value ${klass || ''}">${value}</div>
+      <div class="stat-sub">${sub || ''}</div>
+    </div>`;
+
+  const stats = p && !p.closed
+    ? `<div class="stats">
+        ${stat('持仓市值', money(p.value), `${num(p.shares)} 份`)}
+        ${stat('浮动盈亏', money(p.unrealized, true), pct(p.unrealized_pct), cls(p.unrealized))}
+        ${stat('累计收益率', pct(r.cumulative), `持有 ${r.days} 天`, cls(r.cumulative))}
+        ${stat('年化 XIRR', r.annualized === null ? '—' : pct(r.annualized),
+               r.annualized === null ? '样本不足 90 天' : '按现金流折现', cls(r.annualized))}
+      </div>`
+    : `<div class="stats">
+        ${stat('累计收益率', pct(r.cumulative), `投入 ${money(r.invested)}`, cls(r.cumulative))}
+        ${stat('已实现盈亏', money(p ? p.realized : 0, true), '已清仓', cls(p ? p.realized : 0))}
+        ${stat('持有天数', `${r.days} 天`, `${r.asof || d.asof} 为止`, '')}
+        ${stat('年化 XIRR', r.annualized === null ? '—' : pct(r.annualized), '', cls(r.annualized))}
+      </div>`;
+
+  const verdictCls = t.verdict && (t.verdict.includes('正向') || t.verdict.includes('低位')) ? 'up'
+    : t.verdict && (t.verdict.includes('低卖') || t.verdict.includes('高位')) ? 'down' : '';
+
+  box.innerHTML = `
+    ${stats}
+    <div class="panel">
+      <div class="panel-head">
+        <h2>净值走势与买卖点</h2>
+        <span class="hint">${d.range.min} — ${d.range.max}</span>
+      </div>
+      <div id="fund-chart" class="chart" style="height:260px"></div>
+      <div class="legend" id="fund-legend"></div>
+      <div class="hint-box" style="margin-top:12px">
+        红点＝买入，绿点＝卖出。点的位置越高，说明买在净值越高的地方。
+        把操作标在曲线上，「追高」和「割肉」不需要别人评价，自己就看得清。
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>择时质量</h2><span class="hint">${t.verdict || '数据不足'}</span></div>
+      <div class="timing-rows">
+        <div class="timing-row">
+          <span>买入 ${t.buy_count} 笔</span>
+          <div class="timing-track"><div class="timing-fill buy" style="width:${t.buy_avg_percentile ?? 0}%"></div></div>
+          <span class="timing-val">平均位于净值 ${t.buy_avg_percentile ?? '—'}% 分位</span>
+        </div>
+        <div class="timing-row">
+          <span>卖出 ${t.sell_count} 笔</span>
+          <div class="timing-track"><div class="timing-fill sell" style="width:${t.sell_avg_percentile ?? 0}%"></div></div>
+          <span class="timing-val">平均位于净值 ${t.sell_avg_percentile ?? '—'}% 分位</span>
+        </div>
+      </div>
+      <div class="hint-box" style="margin-top:12px">
+        分位＝该笔成交净值在展示区间最低与最高净值之间的位置。0% 是区间最低点，100% 是最高点。
+        买入分位越低越好；卖出分位应高于买入分位。
+      </div>
+    </div>
+
+    <div class="panel flush">
+      <div class="panel-head"><h2>该基金全部操作</h2><span class="hint">${d.markers.length} 笔</span></div>
+      <div id="fund-txns"></div>
+    </div>`;
+
+  renderFundChart(d);
+  renderFundTxns(d);
+}
+
+function renderFundChart(d) {
+  const navs = d.nav.filter((x) => x.nav !== null);
+  const markers = d.markers;
+  const box = $('#fund-chart');
+  if (!navs.length) {
+    box.innerHTML = '<div class="empty">没有净值数据</div>';
+    return;
+  }
+
+  const W = 760, H = 260, P = { t: 16, r: 14, b: 26, l: 56 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+
+  let lo = Math.min(...navs.map((x) => x.nav));
+  let hi = Math.max(...navs.map((x) => x.nav));
+  const pad = (hi - lo) * 0.1 || 0.05;
+  lo = Math.max(0, lo - pad);
+  hi = hi + pad;
+
+  const idx = new Map(navs.map((n, i) => [n.date, i]));
+  const x = (i) => P.l + (navs.length === 1 ? iw / 2 : (i / (navs.length - 1)) * iw);
+  const y = (v) => P.t + ih - ((v - lo) / (hi - lo)) * ih;
+
+  const line = navs.map((n, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(n.nav).toFixed(1)}`).join('');
+  const area = `${line}L${x(navs.length - 1).toFixed(1)},${(P.t + ih).toFixed(1)}L${x(0).toFixed(1)},${(P.t + ih).toFixed(1)}Z`;
+
+  let grid = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + ((hi - lo) * i) / 4;
+    const yy = y(v);
+    grid += `<line x1="${P.l}" y1="${yy.toFixed(1)}" x2="${W - P.r}" y2="${yy.toFixed(1)}" stroke="var(--line)" stroke-width="1" opacity=".7"/>`;
+    grid += `<text x="${P.l - 8}" y="${(yy + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">${v.toFixed(3)}</text>`;
+  }
+
+  const xCount = Math.min(5, navs.length);
+  let xl = '';
+  for (let i = 0; i < xCount; i++) {
+    const k = Math.round((i / Math.max(1, xCount - 1)) * (navs.length - 1));
+    const anchor = i === 0 ? 'start' : i === xCount - 1 ? 'end' : 'middle';
+    xl += `<text x="${x(k).toFixed(1)}" y="${H - 8}" text-anchor="${anchor}" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">${navs[k].date.slice(5)}</text>`;
+  }
+
+  // 买卖点：先画线由低到高，避免重叠时小的被盖
+  let dots = '';
+  const lastNav = navs[navs.length - 1].nav;
+  const firstNav = navs[0].nav;
+  const up = lastNav >= firstNav;
+  for (const m of markers) {
+    let i = idx.get(m.date);
+    if (i === undefined) {
+      const prior = navs.filter((n) => n.date <= m.date);
+      if (!prior.length) continue;
+      i = idx.get(prior[prior.length - 1].date);
+    }
+    if (i === undefined) continue;
+    const cx = x(i), cy = y(m.nav);
+    const isBuy = m.side === 'buy';
+    const color = isBuy ? 'var(--up)' : 'var(--down)';
+    dots += `<g class="marker" data-mid="${m.id}">
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5" fill="${color}" stroke="var(--surface)" stroke-width="1.5"/>
+      <title>${m.date} ${m.action_name} ${money(m.amount)} @ ${m.nav}</title>
+    </g>`;
+  }
+
+  box.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" id="fund-svg">
+      <defs>
+        <linearGradient id="fundArea" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--ink-3)" stop-opacity=".14"/>
+          <stop offset="100%" stop-color="var(--ink-3)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      ${grid}
+      <path d="${area}" fill="url(#fundArea)"/>
+      <path d="${line}" fill="none" stroke="var(--ink-2)" stroke-width="1.8"
+        stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+      ${xl}
+      ${dots}
+    </svg>`;
+
+  $('#fund-legend').innerHTML = `
+    <span><i style="background:var(--ink-2)"></i>单位净值</span>
+    <span><i style="background:var(--up);height:8px;width:8px;border-radius:50%"></i>买入</span>
+    <span><i style="background:var(--down);height:8px;width:8px;border-radius:50%"></i>卖出</span>
+    <span style="margin-left:auto">${up ? '区间上涨' : '区间下跌'} ${pct((lastNav / firstNav - 1) * 100)}</span>`;
+}
+
+function renderFundTxns(d) {
+  const box = $('#fund-txns');
+  const list = [...d.markers].reverse();
+  if (!list.length) {
+    box.innerHTML = '<div class="empty">该基金还没有操作记录</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div class="table-wrap"><table class="responsive">
+      <thead><tr>
+        <th>日期</th><th>操作</th><th class="num">金额</th><th class="num">份额</th>
+        <th class="num">成交净值</th><th class="num">净值分位</th><th>备注</th>
+      </tr></thead>
+      <tbody>${list.map((m) => `
+        <tr>
+          <td data-label="日期">${m.date}</td>
+          <td data-label="操作"><span class="pill act-${m.action}">${m.action_name}</span></td>
+          <td class="num" data-label="金额">${money(m.amount)}</td>
+          <td class="num" data-label="份额">${num(m.shares)}</td>
+          <td class="num" data-label="成交净值">${num(m.nav, 4)}</td>
+          <td class="num" data-label="净值分位"><span class="${m.percentile > 70 ? 'up' : m.percentile < 30 ? 'down' : 'flat'}">${m.percentile}%</span></td>
+          <td class="muted" data-label="备注" style="font-size:12px">${esc(m.note)}</td>
+        </tr>`).join('')}</tbody>
+    </table></div>`;
 }
 
 /* ---------------- 对账校准 ---------------- */
@@ -506,7 +839,7 @@ function renderPositions(positions) {
   const rows = holding.map((p) => `
     <tr>
       <td class="name full" data-label="基金">
-        ${esc(p.name)}<span class="code">${p.code}</span>
+        <span class="link-fund" data-detail="${p.code}">${esc(p.name)}</span><span class="code">${p.code}</span>
       </td>
       <td data-label="类别"><span class="pill cat-${p.category}">${esc(p.category_name)}</span></td>
       <td class="num" data-label="份额">${num(p.shares)}</td>
@@ -531,6 +864,16 @@ function renderPositions(positions) {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+  bindFundLinks(box);
+}
+
+function bindFundLinks(root) {
+  (root || document).querySelectorAll('.link-fund').forEach((el) => {
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openFundDetail(el.dataset.detail);
+    });
+  });
 }
 
 /* ---------------- SVG 走势图 ---------------- */
@@ -1220,6 +1563,55 @@ function bindEvents() {
   // 添加基金
   $('#btn-add-fund').addEventListener('click', () => openModal('#modal-fund'));
   $('#btn-reconcile').addEventListener('click', openReconcile);
+
+  // 定投计划
+  $('#btn-sip-new').addEventListener('click', () => openSipModal(null));
+  $('#sp-freq').addEventListener('change', syncSipFreqFields);
+  $('#btn-save-sip').addEventListener('click', async () => {
+    const id = $('#sp-id').value;
+    const body = {
+      code: $('#sp-code').value,
+      amount: parseFloat($('#sp-amount').value) || 0,
+      fee_rate: parseFloat($('#sp-fee').value) || 0,
+      freq: $('#sp-freq').value,
+      weekday: parseInt($('#sp-weekday').value),
+      monthday: parseInt($('#sp-monthday').value),
+      start_date: $('#sp-start').value,
+      end_date: $('#sp-end').value || null,
+      enabled: $('#sp-enabled').checked,
+      note: $('#sp-note').value,
+    };
+    try {
+      loading(true);
+      if (id) await put('/api/sip-plans/' + id, body);
+      else await post('/api/sip-plans', body);
+      toast('计划已保存');
+      closeModal('#modal-sip-plan');
+      await loadSipPlans();
+    } catch (e) { toast(e.message, true); } finally { loading(false); }
+  });
+  $('#btn-del-sip').addEventListener('click', async () => {
+    const id = $('#sp-id').value;
+    if (!id || !confirm('删除这条定投计划？\n\n已生成的流水不会删除，只是停止后续自动补生成。')) return;
+    try {
+      await del('/api/sip-plans/' + id);
+      toast('计划已删除');
+      closeModal('#modal-sip-plan');
+      await loadSipPlans();
+    } catch (e) { toast(e.message, true); }
+  });
+  $('#btn-sip-runall').addEventListener('click', async () => {
+    try {
+      loading(true);
+      const r = await post('/api/sip-plans/run-all', {});
+      toast(r.total_created ? `共生成 ${r.total_created} 条定投记录` : '所有计划都已是最新');
+      await loadSipPlans();
+      loadOverview();
+    } catch (e) { toast(e.message, true); } finally { loading(false); }
+  });
+
+  // 基金详情返回
+  $('#btn-fund-back').addEventListener('click', () => switchView('overview'));
   $('#btn-sync-bench').addEventListener('click', async () => {
     const presets = state.benchPresets || [];
     if (!presets.length) { toast('没有可用的预设指数', true); return; }
@@ -1334,6 +1726,7 @@ async function boot() {
     } catch { /* 忽略 */ }
     prepareExport();
     bindEvents();
+    autoRunSipPlans();
   } catch (e) {
     document.body.insertAdjacentHTML('afterbegin',
       `<div style="padding:16px;background:#c0392b;color:#fff;font-size:13px">启动失败：${esc(e.message)}</div>`);
