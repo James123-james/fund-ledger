@@ -7,6 +7,8 @@ data/
 *.db
 *.db-wal
 *.db-shm
+# 自动备份目录（在 data/ 下，这里再声明一次以防 data/ 规则被改动）
+data/backups/
 
 # 但演示数据要保留，别人克隆后能直接用 --data demo 看效果
 !demo/fund.db

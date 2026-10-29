@@ -278,6 +278,18 @@
 
     <div class="panel">
       <div class="panel-head">
+        <h2>分红识别</h2>
+        <button class="btn ghost sm" id="btn-scan-div">重新识别</button>
+      </div>
+      <p class="muted">
+        从累计净值与单位净值的差值反推历史分红。分红当天净值会扣掉分红额，
+        若不记录，份额与成本单价都会偏。
+      </p>
+      <div id="dividend-result"><div class="empty">点「重新识别」开始扫描</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
         <h2>对账校准</h2>
         <button class="btn ghost sm" id="btn-reconcile">开始对账</button>
       </div>
@@ -290,10 +302,12 @@
 
     <div class="panel">
       <div class="panel-head"><h2>数据</h2></div>
-      <p class="muted">所有数据保存在本机的 <code>data/fund.db</code> 单文件里。备份就是复制这个文件。</p>
+      <p class="muted">所有数据保存在本机的 <code>data/fund.db</code> 单文件里。</p>
       <div class="actions">
-        <a class="btn ghost" href="/api/backup">下载数据库备份</a>
+        <button class="btn ghost sm" id="btn-backup-now">立即备份一份</button>
+        <a class="btn ghost sm" href="/api/backup">下载数据库文件</a>
       </div>
+      <div id="backup-info" style="margin-top:14px"></div>
       <p class="muted" style="margin-top:12px;font-size:12px">
         如需彻底重置：先关闭程序，再删除 <code>data/fund.db</code>，重新启动即恢复初始状态。
       </p>

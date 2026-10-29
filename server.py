@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app import analytics, db, engine, exporter, quotes, sip  # noqa: E402
+from app import analytics, backup, db, dividend, engine, exporter, quotes, sip  # noqa: E402
 
 WEB_DIR = os.path.join(BASE_DIR, "web")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -413,6 +413,27 @@ def handle_api(method, path, query, body, conn):
         df = parse_date((query.get("from") or [None])[0])
         dt = parse_date((query.get("to") or [None])[0])
         return 200, analytics.fund_detail(conn, m.group(1), df, dt), {}
+
+    # ---- 分红识别
+    if path == "/api/dividends" and method == "GET":
+        code = (query.get("code") or [None])[0]
+        return 200, dividend.scan(conn, code), {}
+
+    if path == "/api/dividends/apply" and method == "POST":
+        items = body.get("items") or []
+        if not isinstance(items, list) or not items:
+            raise ApiError("请至少选择一次分红")
+        return 200, dividend.apply(conn, items), {}
+
+    # ---- 自动备份
+    if path == "/api/backups" and method == "GET":
+        return 200, backup.stats(DB_PATH), {}
+
+    if path == "/api/backups" and method == "POST":
+        name, info = backup.make(DB_PATH)
+        if name is None:
+            raise ApiError(info)
+        return 200, {"name": name, "size": info}, {}
 
     # ---- 模板
     if path == "/api/templates" and method == "GET":
@@ -804,6 +825,14 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
 
     db.init(DB_PATH).close()
+
+    # 每天首次启动自动备份。放在 db.init 之后，确保表结构已是最新。
+    # 用 backup API 而非文件复制，WAL 模式下才能拿到一致快照。
+    _bk = backup.ensure_daily(DB_PATH)
+    if _bk.get("created"):
+        print(f"  已自动备份：{_bk['name']}（{_bk['size'] // 1024} KB）")
+    elif _bk.get("reason") and _bk["reason"] != "今日已有备份":
+        print(f"  [提示] 自动备份未完成：{_bk['reason']}")
     OPEN_BROWSER = not args.no_browser
 
     if args.strict_port:

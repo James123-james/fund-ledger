@@ -17,7 +17,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
-from app import analytics, db, engine, sip  # noqa: E402
+from app import analytics, backup, db, dividend, engine, sip  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -404,6 +404,148 @@ def test_fund_detail(conn):
     check("不存在的基金报错", "error" in missing)
 
 
+# ---------------------------------------------------------------- 分红识别
+
+
+def _make_dividend_fund(conn, code="DIV1", div_dates=("2026-07-02", "2026-08-04")):
+    """造一只净值恒定 1.6、按指定日期每次分红 0.01 的基金。
+
+    分红表现为「累计净值增加而单位净值不变」，正是真实数据的形态。
+    """
+    conn.execute(
+        "INSERT INTO funds (code,name,category,is_money,created_at) "
+        "VALUES (?,?,'stock',0,datetime('now'))", (code, "分红测试基金")
+    )
+    days = ["2026-06-01", "2026-06-02", "2026-06-03",
+            "2026-07-01", "2026-07-02", "2026-07-03",
+            "2026-08-03", "2026-08-04", "2026-08-05"]
+    acc = 1.0
+    for d in days:
+        if d in div_dates:
+            acc = round(acc + 0.01, 4)
+        conn.execute(
+            "INSERT INTO nav (code,date,nav,acc_nav,pct) VALUES (?,?,?,?,0)",
+            (code, d, 1.6, acc),
+        )
+    conn.execute(
+        "INSERT INTO txns (code,date,action,amount,shares,nav,fee,note,created_at) "
+        "VALUES (?,'2026-06-01','open',1600,1000,1.6,0,'','')", (code,)
+    )
+    conn.commit()
+
+
+def test_dividend(conn):
+    print("\n== 分红识别 ==")
+    _make_dividend_fund(conn)
+
+    found = dividend.detect_fund(conn, "DIV1")
+    check("检测到两次分红", len(found) == 2, f"{len(found)} 次")
+    check("每份金额正确", all(abs(d["per_share"] - 0.01) < 1e-6 for d in found),
+          str([d["per_share"] for d in found]))
+    check("除息日正确",
+          [d["ex_date"] for d in found] == ["2026-07-02", "2026-08-04"],
+          str([d["ex_date"] for d in found]))
+
+    r = dividend.scan(conn, "DIV1")
+    check("扫描结果为未记录", r["summary"]["pending"] == 2, str(r["summary"]))
+    it = r["items"][0]
+    check("登记日为除息日前一交易日", it["record_date"] == "2026-07-01", it["record_date"])
+    check("登记日份额正确", abs(it["shares"] - 1000) < 0.01, str(it["shares"]))
+    check("应得现金 = 份额 × 每份", abs(it["cash"] - 10.0) < 0.01, str(it["cash"]))
+    check("再投份额 = 现金 ÷ 净值", abs(it["reinvest_shares"] - 6.25) < 0.01,
+          str(it["reinvest_shares"]))
+
+    # 现金分红
+    res = dividend.apply(conn, [{"code": "DIV1", "ex_date": "2026-07-02", "mode": "cash"}])
+    check("现金分红写入成功", res["written"] == 1, str(res["results"][0].get("error") or "OK"))
+    pos = {p["code"]: p for p in engine.build_positions(conn)}["DIV1"]
+    check("现金分红不增份额", abs(pos["shares"] - 1000) < 0.01, str(pos["shares"]))
+    check("现金分红计入已实现", abs(pos["realized"] - 10.0) < 0.01, str(pos["realized"]))
+    check("现金分红不改成本", abs(pos["cost"] - 1600) < 0.01, str(pos["cost"]))
+
+    # 幂等
+    res2 = dividend.apply(conn, [{"code": "DIV1", "ex_date": "2026-07-02", "mode": "cash"}])
+    check("同日重复入账被拒", res2["written"] == 0, str(res2["results"][0].get("error")))
+
+    # 红利再投
+    res3 = dividend.apply(conn, [{"code": "DIV1", "ex_date": "2026-08-04", "mode": "reinvest"}])
+    check("红利再投写入成功", res3["written"] == 1, str(res3["results"][0].get("error") or "OK"))
+    pos = {p["code"]: p for p in engine.build_positions(conn)}["DIV1"]
+    check("再投增加份额", pos["shares"] > 1006, str(pos["shares"]))
+    check("再投成本不变", abs(pos["cost"] - 1600) < 0.01, str(pos["cost"]))
+    check("再投落袋为 0", abs(pos["realized"] - 10.0) < 0.01,
+          f"{pos['realized']}（仅前一笔现金分红）")
+
+    # 已记录状态
+    r2 = dividend.scan(conn, "DIV1")
+    check("入账后标记为已记录", r2["summary"]["recorded"] == 2, str(r2["summary"]))
+
+    # 无持仓期间的分红不应提示
+    conn.execute(
+        "INSERT INTO funds (code,name,category,is_money,created_at) "
+        "VALUES ('DIV2','无持仓基金','stock',0,datetime('now'))"
+    )
+    acc = 1.0
+    for d in ("2025-01-02", "2025-01-03"):
+        if d == "2025-01-03":
+            acc = 1.01
+        conn.execute(
+            "INSERT INTO nav (code,date,nav,acc_nav,pct) VALUES ('DIV2',?,1.5,?,0)", (d, acc)
+        )
+    conn.commit()
+    r3 = dividend.scan(conn, "DIV2")
+    check("无持仓的分红不提示", r3["summary"]["total"] == 0, str(r3["summary"]))
+
+    # 货币基金不参与净值型分红
+    r4 = dividend.scan(conn, "M001")
+    check("货币基金被跳过", r4["summary"]["total"] == 0, str(r4["summary"]))
+
+
+# ---------------------------------------------------------------- 自动备份
+
+
+def test_backup(tmpdir):
+    print("\n== 自动备份 ==")
+    import os
+
+    p = os.path.join(tmpdir, "bk.db")
+    conn = db.init(p)
+    conn.execute(
+        "INSERT INTO funds (code,name,category,is_money,created_at) "
+        "VALUES ('BK1','备份测试','stock',0,datetime('now'))"
+    )
+    conn.commit()
+
+    r = backup.ensure_daily(p)
+    check("首次自动备份成功", r.get("created") is True, str(r.get("name") or r.get("reason")))
+
+    r2 = backup.ensure_daily(p)
+    check("同日不重复备份", r2.get("created") is False, str(r2.get("reason")))
+
+    # 备份内容必须包含最新写入（WAL 模式下直接复制文件会丢这部分）
+    d = backup.backup_dir(p)
+    f = os.path.join(d, r["name"])
+    c2 = db.connect(f)
+    n = c2.execute("SELECT COUNT(*) FROM funds WHERE code='BK1'").fetchone()[0]
+    c2.close()
+    check("备份包含最新写入", n == 1, f"{n} 条")
+
+    # 保留上限
+    for i in range(backup.KEEP + 5):
+        open(os.path.join(d, f"fund-2020{i:04d}.db"), "w").write("x")
+    backup._prune(p)
+    after = len(backup._list_backups(p))
+    check("超出上限自动清理", after == backup.KEEP, f"剩 {after} 份 / 上限 {backup.KEEP}")
+
+    st = backup.stats(p)
+    check("统计份数正确", st["count"] == backup.KEEP, str(st["count"]))
+    # 文件名带日期，字典序即时间序；items 反转后第一条应是字典序最大的那个
+    allnames = sorted(backup._list_backups(p))
+    check("最新一份排在最前", st["items"][0]["name"] == allnames[-1],
+          f"{st['items'][0]['name']} vs 应为 {allnames[-1]}")
+    conn.close()
+
+
 # ---------------------------------------------------------------- 主流程
 
 
@@ -419,6 +561,8 @@ def main():
             test_reconcile(conn)
             test_sip(conn)
             test_fund_detail(conn)
+            test_dividend(conn)
+            test_backup(tmp)
         finally:
             conn.close()
 
