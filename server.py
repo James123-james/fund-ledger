@@ -407,6 +407,13 @@ def handle_api(method, path, query, body, conn):
     if path == "/api/sip-plans/run-all" and method == "POST":
         return 200, sip.run_all(conn, body.get("until")), {}
 
+    # 把历史定投流水归类成计划
+    if path == "/api/sip-plans/adopt" and method == "POST":
+        if body.get("dry_run"):
+            return 200, sip.adopt_history(conn, body.get("codes"), dry_run=True), {}
+        backup.make(DB_PATH, tag="before-adopt")
+        return 200, sip.adopt_history(conn, body.get("codes")), {}
+
     # ---- 单基金详情
     m = re.fullmatch(r"/api/funds/(\d{6})/detail", path)
     if m and method == "GET":

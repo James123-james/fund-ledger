@@ -333,7 +333,7 @@ function renderSipPlans() {
         <div>
           <div class="sip-name" data-detail="${p.code}" style="cursor:pointer">${esc(p.fund_name || p.code)}
             <span class="code">${p.code}</span></div>
-          <div class="sip-meta">${esc(p.freq_name)} · ${money(p.amount)}/期 · 费率 ${p.fee_rate}%</div>
+          <div class="sip-meta">${esc(p.freq_name)} · ${money(p.amount)}/期 · 费率 ${p.fee_rate}%${p.holiday_mode === 'skip' ? ' · 遇假期跳过' : ''}</div>
         </div>
         <div class="sip-status">
           ${p.enabled ? '<span class="pill act-open">启用中</span>' : '<span class="pill">已停用</span>'}
@@ -1749,6 +1749,34 @@ function bindEvents() {
       await loadSipPlans();
     } catch (e) { toast(e.message, true); }
   });
+  $('#btn-sip-adopt').addEventListener('click', async () => {
+    try {
+      loading(true);
+      const prev = await post('/api/sip-plans/adopt', { dry_run: true });
+      if (!prev.plans || !prev.plans.length) {
+        toast('没有找到可归类的定投流水');
+        return;
+      }
+      const lines = prev.plans.map((p) => {
+        const st = p.enabled ? '进行中' : '已结束';
+        const end = p.end_date || '继续';
+        return `${p.code} ${p.freq}${p.holiday_mode === 'skip' ? '(假期跳过)' : ''}  ${p.amount}元/期  ${p.start_date}→${end}  ${p.count}笔  ${st}`;
+      });
+      const total = prev.plans.reduce((a, b) => a + b.count, 0);
+      const msg = `将创建 ${prev.plans.length} 个计划，覆盖 ${total} 笔流水：\n\n`
+        + lines.join('\n') + '\n\n自动备份后执行，继续？';
+      if (!confirm(msg)) return;
+      const r = await post('/api/sip-plans/adopt', {});
+      toast(`已创建 ${r.created} 个计划，绑定 ${r.bound} 笔流水`);
+      await loadSipPlans();
+      loadOverview();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      loading(false);
+    }
+  });
+
   $('#btn-sip-runall').addEventListener('click', async () => {
     try {
       loading(true);
