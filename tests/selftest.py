@@ -351,6 +351,108 @@ def test_sip(conn):
     check("停用计划不再生成", rd["count"] == 0, rd.get("error") or "")
 
 
+# ---------------------------------------------------------------- 历史定投归类
+
+
+def test_adopt(tmpdir):
+    print("\n== 历史定投归类 ==")
+    import os
+
+    p = os.path.join(tmpdir, "adopt.db")
+    conn = db.init(p)
+    conn.execute(
+        "INSERT INTO funds (code,name,category,is_money,created_at) "
+        "VALUES ('AD1','归类测试','stock',0,datetime('now'))"
+    )
+    # 造 2026-08-03 ~ 2026-10-30 的交易日历，并挖掉国庆（10-01~10-07）
+    cal = []
+    d = date(2026, 8, 3)
+    while d <= date(2026, 10, 30):
+        if d.weekday() < 5 and not (date(2026, 10, 1) <= d <= date(2026, 10, 7)):
+            cal.append(d.isoformat())
+        d += timedelta(days=1)
+    for ds in cal:
+        conn.execute(
+            "INSERT INTO nav (code,date,nav,acc_nav,pct) VALUES ('AD1',?,1.0,1.0,0)", (ds,)
+        )
+    conn.commit()
+
+    # 前段：交易日日投；后段：每周一（跳过国庆那个周一）
+    daily = [d for d in cal if "2026-08-03" <= d <= "2026-09-16"]
+    mondays = [d for d in cal if date.fromisoformat(d).weekday() == 0
+               and "2026-09-21" <= d <= "2026-10-26"]
+    for ds in daily + mondays:
+        conn.execute(
+            "INSERT INTO txns (code,date,action,amount,shares,nav,fee,note,created_at) "
+            "VALUES ('AD1',?,'sip',10,10,1.0,0,'','')", (ds,)
+        )
+    conn.commit()
+
+    # 模式识别
+    segs = sip.split_patterns(sorted(daily + mondays))
+    check("切出两个片段", len(segs) == 2, f"{len(segs)} 段")
+    check("前段识别为日投", segs[0][0] == "daily", segs[0][0])
+    check("后段识别为周投", segs[1][0] == "weekly", segs[1][0])
+    check("周投星期正确", segs[1][1] == 0, f"weekday={segs[1][1]}")
+
+    # 日投不应被误判为周投：只给连续交易日
+    only_daily = sorted(daily)
+    segs2 = sip.split_patterns(only_daily)
+    check("连续日投不被误判", len(segs2) == 1 and segs2[0][0] == "daily",
+          str([(x[0], len(x[2])) for x in segs2]))
+
+    # 单笔不成模式
+    segs3 = sip.split_patterns([daily[0]])
+    check("单笔归为日投", segs3[0][0] == "daily", segs3[0][0])
+
+    # 预演不写库
+    prev = sip.adopt_history(conn, ["AD1"], dry_run=True)
+    check("预演返回两个计划", len(prev["plans"]) == 2, str(len(prev["plans"])))
+    check("预演不写库",
+          conn.execute("SELECT COUNT(*) c FROM sip_plans WHERE code='AD1'").fetchone()["c"] == 0)
+
+    # 假期模式判定：周一段缺了国庆那个周一 → skip
+    wk = [x for x in prev["plans"] if x["freq"] == "weekly"][0]
+    check("识别出假期跳过", wk["holiday_mode"] == "skip", wk["holiday_mode"])
+
+    # 执行
+    res = sip.adopt_history(conn, ["AD1"])
+    check("创建两个计划", res["created"] == 2, str(res["created"]))
+    check("绑定全部流水", res["bound"] == len(daily) + len(mondays),
+          f"{res['bound']} vs {len(daily)+len(mondays)}")
+
+    tot = conn.execute("SELECT COUNT(*) c FROM txns WHERE code='AD1'").fetchone()["c"]
+    bnd = conn.execute(
+        "SELECT COUNT(*) c FROM txns WHERE code='AD1' AND plan_id IS NOT NULL"
+    ).fetchone()["c"]
+    check("无未绑定流水", tot == bnd, f"{bnd}/{tot}")
+
+    # 已结束片段停用、进行中片段启用
+    plans = [dict(r) for r in conn.execute(
+        "SELECT * FROM sip_plans WHERE code='AD1' ORDER BY start_date").fetchall()]
+    check("前段已停用", plans[0]["enabled"] == 0)
+    check("后段启用中", plans[1]["enabled"] == 1)
+    check("前段有结束日", plans[0]["end_date"] is not None, str(plans[0]["end_date"]))
+    check("后段无结束日", plans[1]["end_date"] is None)
+
+    # 幂等：重复执行不产生重复计划
+    sip.adopt_history(conn, ["AD1"])
+    n = conn.execute("SELECT COUNT(*) c FROM sip_plans WHERE code='AD1'").fetchone()["c"]
+    check("重复归类不重复建计划", n == 2, f"{n} 个")
+    bnd2 = conn.execute(
+        "SELECT COUNT(*) c FROM txns WHERE code='AD1' AND plan_id IS NOT NULL"
+    ).fetchone()["c"]
+    check("重复归类仍全部绑定", bnd2 == tot, f"{bnd2}/{tot}")
+
+    # 归类后补生成不应重复写入
+    before = conn.execute("SELECT COUNT(*) c FROM txns WHERE code='AD1'").fetchone()["c"]
+    sip.run_all(conn, until="2026-10-26")
+    after = conn.execute("SELECT COUNT(*) c FROM txns WHERE code='AD1'").fetchone()["c"]
+    check("归类后补生成不重复", after == before, f"{before} → {after}")
+
+    conn.close()
+
+
 # ---------------------------------------------------------------- 单基金详情
 
 
@@ -563,6 +665,7 @@ def main():
             test_fund_detail(conn)
             test_dividend(conn)
             test_backup(tmp)
+            test_adopt(tmp)
         finally:
             conn.close()
 

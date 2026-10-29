@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS sip_plans (
     start_date  TEXT NOT NULL,
     end_date    TEXT,                     -- 空表示长期有效
     last_run    TEXT,                     -- 上次补生成到的日期
+    holiday_mode TEXT NOT NULL DEFAULT 'shift',  -- 扣款日遇假期：shift 顺延 / skip 跳过
     enabled     INTEGER NOT NULL DEFAULT 1,
     note        TEXT,
     created_at  TEXT NOT NULL
@@ -194,6 +195,13 @@ def _migrate(conn):
     if "plan_id" not in txn_cols:
         conn.execute("ALTER TABLE txns ADD COLUMN plan_id INTEGER")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_plan ON txns(plan_id)")
+        conn.commit()
+
+    sip_cols = cols("sip_plans")
+    if sip_cols and "holiday_mode" not in sip_cols:
+        conn.execute(
+            "ALTER TABLE sip_plans ADD COLUMN holiday_mode TEXT NOT NULL DEFAULT 'shift'"
+        )
         conn.commit()
 
 

@@ -36,6 +36,15 @@ def _trading_days(conn, start, end):
     ]
 
 
+def _skip_holiday(plan):
+    """扣款日落在非交易日时，是跳过还是顺延。
+
+    shift（默认）：顺延到下一个交易日，多数平台的处理方式
+    skip：直接跳过这一期，对应「每周一（交易日）」这类明确的约定
+    """
+    return (plan.get("holiday_mode") or "shift") == "skip"
+
+
 def _due_dates(conn, plan, since, until):
     """算出应生成的扣款日。
 
@@ -69,8 +78,8 @@ def _due_dates(conn, plan, since, until):
                 ds = cur.isoformat()
                 if ds in cal_set:
                     out.add(ds)
-                else:
-                    # 落在周末或假期，顺延到下一个交易日
+                elif not _skip_holiday(plan):
+                    # 落在周末或假期：默认顺延到下一个交易日
                     nxt = [d for d in calendar if d > ds]
                     if nxt:
                         out.add(nxt[0])
@@ -98,7 +107,7 @@ def _due_dates(conn, plan, since, until):
                     continue
                 if ds in cal_set:
                     out.add(ds)
-                else:
+                elif not _skip_holiday(plan):
                     nxt = [d for d in calendar if d >= ds]
                     if nxt:
                         out.add(nxt[0])
@@ -375,3 +384,263 @@ def run_all(conn, until=None):
         results.append(run_plan(conn, row["id"], until))
     total = sum(r.get("count", 0) for r in results)
     return {"results": results, "total_created": total}
+
+
+# ---------------------------------------------------------------- 历史归类
+
+
+def _trailing_weekly(dates):
+    """从末尾找一个「同星期几、间隔为 7 的倍数」的尾段。
+
+    判定条件必须同时满足，否则日定投会被误判：
+    - 该段起点之后的所有记录都属于该段（否则说明中间还夹着别的记录）
+
+    这条约束是关键。日定投里「上周同一天」的间隔也是 7 天，
+    只看间隔会把连续日定投错认成周定投。
+    """
+    if len(dates) < 2:
+        return None
+    wd = date.fromisoformat(dates[-1]).weekday()
+    run = [dates[-1]]
+    for ds in reversed(dates[:-1]):
+        dd = date.fromisoformat(ds)
+        if dd.weekday() != wd:
+            break
+        gap = (date.fromisoformat(run[0]) - dd).days
+        if gap < 5 or gap % 7 != 0:
+            break
+        run.insert(0, ds)
+    if len(run) < 2:
+        return None
+    start = run[0]
+    if len([d for d in dates if d > start]) != len(run) - 1:
+        return None
+    return run
+
+
+def _trailing_monthly(dates):
+    """从末尾找「同一个月内日号相同」的尾段（间隔 28-31 天）。"""
+    if len(dates) < 2:
+        return None
+    dom = date.fromisoformat(dates[-1]).day
+    run = [dates[-1]]
+    for ds in reversed(dates[:-1]):
+        dd = date.fromisoformat(ds)
+        if dd.day != dom:
+            break
+        gap = (date.fromisoformat(run[0]) - dd).days
+        if gap < 26 or gap > 32:
+            break
+        run.insert(0, ds)
+    if len(run) < 2:
+        return None
+    start = run[0]
+    if len([d for d in dates if d > start]) != len(run) - 1:
+        return None
+    return run
+
+
+def split_patterns(dates):
+    """把一串定投日期切成若干「周期模式」片段。
+
+    返回 [(freq, weekday, [dates]), ...]，按时间顺序。
+    优先级：周定投 → 月定投 → 其余归为日定投。
+    """
+    dates = sorted(dates)
+    if not dates:
+        return []
+
+    weekly = _trailing_weekly(dates)
+    if weekly:
+        rest = dates[: len(dates) - len(weekly)]
+        segs = split_patterns(rest) if rest else []
+        segs.append(("weekly", date.fromisoformat(dates[-1]).weekday(), weekly))
+        return segs
+
+    monthly = _trailing_monthly(dates)
+    if monthly:
+        rest = dates[: len(dates) - len(monthly)]
+        segs = split_patterns(rest) if rest else []
+        segs.append(("monthly", None, monthly))
+        return segs
+
+    return [("daily", None, dates)]
+
+
+def _detect_holiday_mode(conn, plan_like, dates):
+    """判断该段是「假期顺延」还是「假期跳过」。
+
+    做法：按指定星期几列出区间内所有自然日，找出非交易日且无记录的那些。
+    若存在这样的日期 → 用户是跳过；否则无法区分，取默认顺延。
+    """
+    first, last = dates[0], dates[-1]
+    have = set(dates)
+    weekdays = _weekday_dates(plan_like, first, last)
+    missing = [d for d in weekdays if d not in have]
+    if not missing:
+        return "shift"
+    cal = set(_trading_days(conn, first, last))
+    if any(d not in cal for d in missing):
+        return "skip"
+    return "shift"
+
+
+def _weekday_dates(plan_like, first, last):
+    freq = plan_like.get("freq")
+    d0, d1 = date.fromisoformat(first), date.fromisoformat(last)
+    out = []
+    if freq == "weekly":
+        wd = plan_like.get("weekday") or 0
+        cur = d0
+        while cur <= d1:
+            if cur.weekday() == wd:
+                out.append(cur.isoformat())
+            cur += timedelta(days=1)
+    elif freq == "monthly":
+        import calendar as _cal
+
+        dom = plan_like.get("monthday") or 1
+        cur = d0
+        seen = set()
+        while cur <= d1:
+            key = (cur.year, cur.month)
+            if key not in seen:
+                seen.add(key)
+                lastd = _cal.monthrange(cur.year, cur.month)[1]
+                out.append(date(cur.year, cur.month, min(dom, lastd)).isoformat())
+            cur = date(cur.year + (cur.month // 12), (cur.month % 12) + 1, 1)
+    return out
+
+
+def adopt_history(conn, codes=None, dry_run=False):
+    """把已有的定投流水归类成正式计划，并回填 plan_id。
+
+    解决的问题：早期导入的历史定投没有归属，导致
+    - 「已生成 N 次」统计不到
+    - 无法与计划比对，做不了定投纪律性分析
+    - 后续自动补生成会与历史记录脱节
+
+    做法：按「基金 + 金额」分组，检测周期模式并切成片段，每段建一个计划。
+    已结束的片段 enabled=0，最后一段（仍在进行）enabled=1。
+
+    dry_run=True 时只返回方案，不写库。
+    """
+    if codes:
+        code_list = list(codes)
+    else:
+        code_list = [
+            r["code"]
+            for r in conn.execute(
+                "SELECT DISTINCT code FROM txns WHERE action = 'sip' ORDER BY code"
+            ).fetchall()
+        ]
+
+    plan_specs = []
+    for code in code_list:
+        fund = conn.execute("SELECT name FROM funds WHERE code = ?", (code,)).fetchone()
+        fund_name = fund["name"] if fund else code
+
+        rows = conn.execute(
+            "SELECT id, date, amount, note FROM txns "
+            "WHERE code = ? AND action = 'sip' ORDER BY date",
+            (code,),
+        ).fetchall()
+        if not rows:
+            continue
+
+        # 按金额分组：金额变了说明是另一个计划
+        by_amount = {}
+        for r in rows:
+            by_amount.setdefault(round(float(r["amount"] or 0), 2), []).append(dict(r))
+
+        for amount, recs in sorted(by_amount.items()):
+            dates = [r["date"] for r in recs]
+            segs = split_patterns(dates)
+            for idx, (freq, weekday, seg_dates) in enumerate(segs):
+                is_last = idx == len(segs) - 1
+                if freq == "monthly":
+                    monthday = date.fromisoformat(seg_dates[-1]).day
+                    weekday_v = None
+                elif freq == "weekly":
+                    monthday = None
+                    weekday_v = weekday
+                else:
+                    weekday_v = monthday = None
+
+                like = {
+                    "freq": freq,
+                    "weekday": weekday_v,
+                    "monthday": monthday,
+                }
+                hmode = (
+                    _detect_holiday_mode(conn, like, seg_dates)
+                    if freq in ("weekly", "monthly")
+                    else "shift"
+                )
+
+                plan_specs.append(
+                    {
+                        "code": code,
+                        "fund_name": fund_name,
+                        "amount": amount,
+                        "freq": freq,
+                        "weekday": weekday_v,
+                        "monthday": monthday,
+                        "holiday_mode": hmode,
+                        "start_date": seg_dates[0],
+                        "end_date": None if is_last else seg_dates[-1],
+                        "enabled": 1 if is_last else 0,
+                        "last_run": seg_dates[-1],
+                        "dates": seg_dates,
+                        "count": len(seg_dates),
+                        "note": (recs[0].get("note") or "历史定投归类")[:60],
+                    }
+                )
+
+    if dry_run:
+        return {"plans": plan_specs, "created": 0, "bound": 0, "dry_run": True}
+
+    created = 0
+    bound = 0
+    assigned = []
+    for spec in plan_specs:
+        # 同一基金先清空旧绑定与旧计划，保证可重复执行
+        conn.execute(
+            "UPDATE txns SET plan_id = NULL WHERE code = ? AND action = 'sip'",
+            (spec["code"],),
+        )
+        conn.execute("DELETE FROM sip_plans WHERE code = ?", (spec["code"],))
+
+    for spec in plan_specs:
+        cur = conn.execute(
+            "INSERT INTO sip_plans (code, amount, fee_rate, freq, weekday, monthday, "
+            "start_date, end_date, last_run, holiday_mode, enabled, note, created_at) "
+            "VALUES (?,?,0,?,?,?,?,?,?,?,?,?,?)",
+            (
+                spec["code"], spec["amount"], spec["freq"], spec["weekday"],
+                spec["monthday"], spec["start_date"], spec["end_date"],
+                spec["last_run"], spec["holiday_mode"], spec["enabled"],
+                spec["note"], date.today().isoformat(),
+            ),
+        )
+        pid = cur.lastrowid
+        created += 1
+        n = 0
+        for ds in spec["dates"]:
+            r = conn.execute(
+                "UPDATE txns SET plan_id = ? WHERE code = ? AND action = 'sip' "
+                "AND date = ? AND plan_id IS NULL",
+                (pid, spec["code"], ds),
+            )
+            n += r.rowcount
+        bound += n
+        assigned.append({**{k: v for k, v in spec.items() if k != "dates"},
+                         "id": pid, "bound": n})
+
+    conn.commit()
+    return {
+        "plans": assigned,
+        "created": created,
+        "bound": bound,
+        "dry_run": False,
+    }
