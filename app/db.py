@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS txns (
     nav        REAL,                     -- 成交净值
     fee        REAL NOT NULL DEFAULT 0,  -- 手续费（申购费/赎回费）
     plan_id    INTEGER,                  -- 来自哪条定投计划（手动录入为 NULL）
+    reason     TEXT,                     -- 决策理由（投资日记，可选填）
     note       TEXT,
     created_at TEXT NOT NULL
 );
@@ -195,6 +196,10 @@ def _migrate(conn):
     if "plan_id" not in txn_cols:
         conn.execute("ALTER TABLE txns ADD COLUMN plan_id INTEGER")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_plan ON txns(plan_id)")
+        conn.commit()
+
+    if "reason" not in txn_cols:
+        conn.execute("ALTER TABLE txns ADD COLUMN reason TEXT")
         conn.commit()
 
     sip_cols = cols("sip_plans")

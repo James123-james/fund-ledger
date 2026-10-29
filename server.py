@@ -26,7 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app import analytics, backup, db, dividend, engine, exporter, quotes, sip  # noqa: E402
+from app import analytics, backup, behavior, db, dividend, engine, exporter, quotes, sip  # noqa: E402
 
 WEB_DIR = os.path.join(BASE_DIR, "web")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -91,6 +91,8 @@ def normalize_txn(payload, conn):
     nav = payload.get("nav")
     nav = float(nav) if nav not in (None, "") else None
     note = (payload.get("note") or "").strip()[:200]
+    # 决策理由：投资日记的最小形态。定投是机械执行，不强制也不建议填
+    reason = (payload.get("reason") or "").strip()[:300]
 
     if amount < 0 or shares < 0 or fee < 0:
         raise ApiError("金额、份额、手续费不能为负数")
@@ -142,6 +144,7 @@ def normalize_txn(payload, conn):
         "nav": round(nav, 4) if nav else None,
         "fee": round(fee, 2),
         "note": note,
+        "reason": reason,
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -290,8 +293,8 @@ def handle_api(method, path, query, body, conn):
     if path == "/api/txns" and method == "POST":
         rec = normalize_txn(body, conn)
         cur = conn.execute(
-            "INSERT INTO txns (code, date, action, amount, shares, nav, fee, note, created_at) "
-            "VALUES (:code,:date,:action,:amount,:shares,:nav,:fee,:note,:created_at)",
+            "INSERT INTO txns (code, date, action, amount, shares, nav, fee, note, reason, created_at) "
+            "VALUES (:code,:date,:action,:amount,:shares,:nav,:fee,:note,:reason,:created_at)",
             rec,
         )
         conn.commit()
@@ -310,7 +313,7 @@ def handle_api(method, path, query, body, conn):
             rec = normalize_txn(body, conn)
             conn.execute(
                 "UPDATE txns SET code=:code, date=:date, action=:action, amount=:amount, "
-                "shares=:shares, nav=:nav, fee=:fee, note=:note WHERE id=:id",
+                "shares=:shares, nav=:nav, fee=:fee, note=:note, reason=:reason WHERE id=:id",
                 {**rec, "id": tid},
             )
             conn.commit()
@@ -420,6 +423,23 @@ def handle_api(method, path, query, body, conn):
         df = parse_date((query.get("from") or [None])[0])
         dt = parse_date((query.get("to") or [None])[0])
         return 200, analytics.fund_detail(conn, m.group(1), df, dt), {}
+
+    # ---- 行为诊断
+    if path == "/api/behavior" and method == "GET":
+        dt = parse_date((query.get("to") or [None])[0])
+        return 200, {
+            "chase": behavior.chase_index(conn, dt),
+            "discipline": behavior.discipline(conn, dt),
+            "holding": behavior.holding(conn, dt),
+            "months": behavior.monthly_list(conn),
+        }, {}
+
+    if path == "/api/monthly" and method == "GET":
+        mo = (query.get("month") or [None])[0]
+        try:
+            return 200, behavior.monthly(conn, mo), {}
+        except ValueError as exc:
+            raise ApiError(str(exc))
 
     # ---- 分红识别
     if path == "/api/dividends" and method == "GET":

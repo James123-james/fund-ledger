@@ -19,6 +19,8 @@ const state = {
   sipPlans: [],
   fundDetail: null,
   dividends: null,
+  months: [],
+  monthly: null,
 };
 
 /* ---------------- 格式化 ---------------- */
@@ -135,6 +137,7 @@ async function loadOverview() {
     renderPositions(data.positions || []);
     renderChart((data.series && data.series.points) || []);
     loadReturns();
+    loadBehavior();
     loadBenchmark();
     loadAttribution();
   } catch (e) {
@@ -223,6 +226,267 @@ function renderReturns(data) {
       累计收益率 = 盈亏 ÷ 投入，不反映时间；年化 XIRR 按每笔现金流的实际发生日折现，是定投场景下更诚实的口径。
       持有不足 ${90} 天的基金不给年化——样本太短，折算成年化会得到 −90% 之类的失真数字。
     </div>`;
+}
+
+/* ---------------- 行为诊断（追涨杀跌） ---------------- */
+
+async function loadBehavior() {
+  const box = $('#behavior');
+  if (!box) return;
+  try {
+    const raw = await api('/api/behavior');
+    state.months = raw.months || [];
+    renderBehavior(raw);
+    loadMonthly();
+  } catch (e) {
+    box.innerHTML = `<div class="empty">诊断失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderBehavior(raw) {
+  const box = $('#behavior');
+  if (!box) return;
+  const d = raw.chase || {};
+  const disc = raw.discipline || {};
+  const hold = raw.holding || {};
+  const a = d.active || {};
+  const sp = d.sip || {};
+
+  if (!a.count) {
+    box.innerHTML = '<div class="empty">还没有主动买入记录（建仓/加仓）。定投不计入，因为它是机械执行，不代表判断。</div>';
+    $('#behavior-hint').textContent = '';
+    return;
+  }
+  $('#behavior-hint').textContent = `主动买入 ${a.count} 笔`;
+
+  const bar = (label, x, tone) => {
+    const hp = x.high_pct ?? 0;
+    const lp = x.low_pct ?? 0;
+    const mp = Math.max(0, 100 - hp - lp);
+    return `<div class="bh-row">
+      <div class="bh-label">${label}</div>
+      <div class="bh-track">
+        <div class="bh-seg hi" style="width:${hp}%" title="高位 ${hp}%"></div>
+        <div class="bh-seg mid" style="width:${mp}%" title="中段 ${mp.toFixed(1)}%"></div>
+        <div class="bh-seg lo" style="width:${lp}%" title="低位 ${lp}%"></div>
+      </div>
+      <div class="bh-nums">
+        <span class="up">高 ${hp}%</span>
+        <span class="flat">${x.weighted_percentile ?? '—'}%</span>
+        <span class="down">低 ${lp}%</span>
+      </div>
+    </div>`;
+  };
+
+  const patternCard = (p) => {
+    const tone = ['chase_up'].includes(p.pattern) ? 'bad'
+      : ['high_open_pyramid'].includes(p.pattern) ? 'warn'
+      : ['low_accumulate'].includes(p.pattern) ? 'good' : '';
+    return `<div class="pat-card ${tone}">
+      <div class="pat-head">
+        <span class="pat-name">${esc(p.name)}<span class="code">${p.code}</span></span>
+        <span class="pat-tag">${esc(p.pattern_name)}</span>
+      </div>
+      <div class="pat-meta">${p.count} 笔 · ${money(p.amount)} · 首笔 ${p.first_percentile}% → 末笔 ${p.last_percentile}%</div>
+      <div class="pat-spark">${sparkline(p.points)}</div>
+    </div>`;
+  };
+
+  box.innerHTML = `
+    <div class="bh-cards">
+      <div class="bh-card">
+        <div class="bh-card-title">主动买入<span class="flat">（你的判断）</span></div>
+        ${bar('', a)}
+        <div class="bh-sub">${money(a.amount)} · 金额加权分位 <b>${a.weighted_percentile ?? '—'}%</b></div>
+      </div>
+      <div class="bh-card">
+        <div class="bh-card-title">定投<span class="flat">（机械执行）</span></div>
+        ${bar('', sp)}
+        <div class="bh-sub">${money(sp.amount)} · 金额加权分位 <b>${sp.weighted_percentile ?? '—'}%</b></div>
+      </div>
+    </div>
+
+    ${d.verdict ? `<div class="bh-verdict">
+      <div class="bh-vtext">${esc(d.verdict)}</div>
+      ${d.advice ? `<div class="bh-vadvice">${esc(d.advice)}</div>` : ''}
+      ${d.gap && d.gap.weighted !== null && Math.abs(d.gap.weighted) > 10 ? `
+        <div class="bh-vgap">主动买入的分位比定投高 <b>${Math.abs(d.gap.weighted).toFixed(0)}</b> 个百分点
+        ——${d.gap.weighted > 0 ? '你的判断不如机械执行买得便宜' : '你的判断比机械执行买得更便宜'}</div>` : ''}
+    </div>` : ''}
+
+    <div class="pat-list">
+      <div class="pat-list-title">逐基金模式（按金额排序，定投不参与）</div>
+      ${(d.per_fund || []).map(patternCard).join('')}
+    </div>
+
+    ${discRow(disc)}
+    ${holdRow(hold)}
+
+    <div class="hint-box" style="margin-top:14px">
+      分位＝成交净值在该基金区间最低与最高之间的位置。70% 以上算高位，30% 以下算低位。
+      金额加权比笔数加权更接近真实影响：10 元买 100 次和买 1 次，对结果的作用不一样。
+    </div>`;
+
+  bindFundLinks(box);
+}
+
+/* 定投纪律性 */
+function discRow(disc) {
+  if (!disc || !disc.rows || !disc.rows.length) return '';
+  const live = disc.rows.filter((r) => r.enabled);
+  if (!live.length) {
+    return `<div class="bh-block">
+      <div class="bh-block-title">定投纪律性</div>
+      <div class="bh-empty">没有进行中的定投计划</div></div>`;
+  }
+  const rows = live.map((r) => `<div class="disc-row">
+      <span class="disc-name">${esc(r.name)}<span class="code">${r.freq_name}</span></span>
+      <span class="disc-nums">${r.actual}/${r.expected} 期
+        <b class="${r.rate >= 100 ? 'down' : r.rate >= 80 ? 'flat' : 'up'}">${r.rate}%</b></span>
+    </div>`).join('');
+  return `<div class="bh-block">
+    <div class="bh-block-title">定投纪律性<span class="flat">（只算进行中的计划）</span></div>
+    ${rows}
+    <div class="bh-block-verdict">${esc(disc.verdict || '')}</div>
+  </div>`;
+}
+
+/* 持有行为 */
+function holdRow(hold) {
+  if (!hold) return '';
+  if (!hold.samples) {
+    return `<div class="bh-block">
+      <div class="bh-block-title">持有行为</div>
+      <div class="bh-empty">${esc(hold.verdict || '还没有卖出记录')}</div></div>`;
+  }
+  const rows = (hold.sells || []).map((x) => `<div class="hold-row">
+      <span class="hold-name">${esc(x.name)}<span class="code">${x.action_name}</span></span>
+      <span class="hold-days ${x.short ? 'up' : 'flat'}">${x.days} 天</span>
+      <span class="hold-basis">${x.percentile === null ? '—' : x.percentile + '% 分位'}</span>
+    </div>`).join('');
+  const box = hold.sufficient
+    ? `<div class="bh-block-verdict">${esc(hold.verdict)}</div>`
+    : `<div class="bh-block-warn">${esc(hold.verdict)}</div>`;
+  return `<div class="bh-block">
+    <div class="bh-block-title">持有行为<span class="flat">（卖出 ${hold.samples} 笔）</span></div>
+    ${rows}
+    ${box}
+  </div>`;
+}
+
+/* 迷你走势：把买入点按时间顺序连成一条线，位置即分位 */
+function sparkline(points) {
+  if (!points || !points.length) return '';
+  const W = 200, H = 34, P = 4;
+  const n = points.length;
+  const x = (i) => P + (n === 1 ? (W - 2 * P) / 2 : (i / (n - 1)) * (W - 2 * P));
+  const y = (v) => P + (1 - v / 100) * (H - 2 * P);
+  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.percentile).toFixed(1)}`).join('');
+  const dots = points.map((p, i) =>
+    `<circle cx="${x(i).toFixed(1)}" cy="${y(p.percentile).toFixed(1)}" r="2.4"
+      fill="${p.percentile >= 70 ? 'var(--up)' : p.percentile <= 30 ? 'var(--down)' : 'var(--ink-3)'}">
+      <title>${p.date} ${money(p.amount)} @ ${p.percentile}%</title></circle>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:34px">
+    <line x1="${P}" y1="${y(70).toFixed(1)}" x2="${W - P}" y2="${y(70).toFixed(1)}"
+      stroke="var(--up)" stroke-width="0.6" stroke-dasharray="3 3" opacity=".35"/>
+    <line x1="${P}" y1="${y(30).toFixed(1)}" x2="${W - P}" y2="${y(30).toFixed(1)}"
+      stroke="var(--down)" stroke-width="0.6" stroke-dasharray="3 3" opacity=".35"/>
+    <path d="${path}" fill="none" stroke="var(--ink-3)" stroke-width="1"
+      stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+    ${dots}
+  </svg>`;
+}
+
+/* ---------------- 月度事实卡 ---------------- */
+
+async function loadMonthly(month) {
+  const box = $('#monthly');
+  if (!box) return;
+  try {
+    const d = await api('/api/monthly' + (month ? '?month=' + month : ''));
+    state.monthly = d;
+    renderMonthly(d);
+    renderMonthGroup(d.month);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderMonthGroup(current) {
+  const g = $('#month-group');
+  if (!g || !state.months) return;
+  g.innerHTML = state.months
+    .slice(0, 6)
+    .map((m) => `<button data-month="${m}" class="${m === current ? 'active' : ''}">${m.slice(5)} 月</button>`)
+    .join('');
+  $$('#month-group button').forEach((btn) => {
+    btn.addEventListener('click', () => loadMonthly(btn.dataset.month));
+  });
+}
+
+function renderMonthly(d) {
+  const box = $('#monthly');
+  if (!box) return;
+  if (!d || !d.has_data) {
+    box.innerHTML = '<div class="empty">这个月还没有数据</div>';
+    return;
+  }
+  const money2 = (v) => (v ? money(v) : '—');
+  const chg = d.value_change;
+  const chgCls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+
+  const stat = (label, value, sub, klass) => `<div class="mc-stat">
+      <div class="mc-stat-label">${label}</div>
+      <div class="mc-stat-value ${klass || ''}">${value}</div>
+      <div class="mc-stat-sub">${sub || '&nbsp;'}</div>
+    </div>`;
+
+  const ops = (d.ops || []).slice(0, 8).map((o) => `<div class="mc-op">
+      <span class="mc-op-date">${o.date.slice(5)}</span>
+      <span class="mc-op-name">${esc(o.name)}</span>
+      <span class="pill act-${o.action}">${o.action_name}</span>
+      <span class="mc-op-amt">${money(o.amount)}</span>
+      ${o.auto ? '<span class="mc-op-auto">自动</span>' : ''}
+    </div>`).join('');
+
+  const reasonTone = d.reason_rate === null ? ''
+    : d.reason_rate >= 80 ? 'down' : d.reason_rate >= 40 ? 'flat' : 'up';
+
+  box.innerHTML = `
+    <div class="mc-head">
+      <span class="mc-month">${d.month}</span>
+      <span class="flat">${d.range.from} ~ ${d.range.to}</span>
+    </div>
+    <div class="mc-stats">
+      ${stat('当月买入', money2(d.buy_amount), `${d.manual_count} 笔主动 · ${d.auto_count} 笔自动`)}
+      ${stat('月末市值', money(d.value), chg === null ? '无上月对比' : `较上月 ${chg >= 0 ? '+' : ''}${money(chg)}`, chgCls)}
+      ${stat('浮动盈亏', money(d.unrealized, true), `成本 ${money(d.cost)}`, cls(d.unrealized))}
+      ${stat('卖出 / 分红', money2(d.sell_amount || d.dividend_amount), d.dividend_amount ? `分红 ${money(d.dividend_amount)}` : '本月无分红', '')}
+    </div>
+
+    <div class="mc-reason">
+      <span>决策理由填写率</span>
+      <div class="mc-reason-track">
+        <div class="mc-reason-fill" style="width:${d.reason_rate ?? 0}%"></div>
+      </div>
+      <b class="${reasonTone}">${d.reason_rate === null ? '无主动操作' : d.reason_rate + '%'}</b>
+    </div>
+    ${d.reason_rate !== null && d.reason_rate < 50 ? `
+      <div class="field-hint" style="margin-top:6px">
+        记一笔时顺手写一句理由，半年后回看时才知道当时的判断是什么。
+      </div>` : ''}
+
+    ${ops ? `<div class="mc-ops">
+      <div class="mc-ops-title">当月操作（${d.txn_count} 笔${d.txn_count > 8 ? '，显示前 8 笔' : ''}）</div>
+      ${ops}
+    </div>` : ''}
+
+    <div class="hint-box" style="margin-top:12px">
+      只陈述事实，不做人群标签。7 个月的数据不足以判断「投资人格」——
+      一旦被贴上「稳健型」这类标签，反而容易自我固化。
+    </div>`;
+
+  bindFundLinks(box);
 }
 
 /* ---------------- 收益归因 ---------------- */
@@ -1228,6 +1492,7 @@ function openTxnModal(txn) {
   $('#f-shares').value = txn ? txn.shares : '';
   $('#f-nav').value = txn && txn.nav ? txn.nav : '';
   $('#f-fee').value = txn ? txn.fee : '';
+  $('#f-reason').value = txn ? (txn.reason || '') : '';
   $('#f-note').value = txn ? (txn.note || '') : '';
   updateTxnHint();
   openModal('#modal-txn');
@@ -1648,11 +1913,16 @@ function bindEvents() {
       shares: parseFloat($('#f-shares').value) || 0,
       nav: $('#f-nav').value === '' ? null : parseFloat($('#f-nav').value),
       fee: parseFloat($('#f-fee').value) || 0,
+      reason: $('#f-reason').value,
       note: $('#f-note').value,
     };
     if (!body.date) { toast('请选择日期', true); return; }
     try {
       loading(true);
+      const needsReason = ['reduce', 'close'].includes(body.action) && !body.reason.trim();
+      if (needsReason && !confirm('卖出类操作没填决策理由。\n\n理由对复盘很有用——半年后你会想知道当时为什么卖。\n仍要保存吗？')) {
+        return;
+      }
       if (id) await put('/api/txns/' + id, body);
       else await post('/api/txns', body);
       toast(id ? '已保存' : '已记录');
