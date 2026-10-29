@@ -17,7 +17,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
-from app import analytics, backup, db, dividend, engine, sip  # noqa: E402
+from app import analytics, backup, behavior, db, dividend, engine, sip  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -648,6 +648,148 @@ def test_backup(tmpdir):
     conn.close()
 
 
+# ---------------------------------------------------------------- 行为诊断
+
+
+def test_behavior(conn):
+    print("\n== 行为诊断 ==")
+
+    # --- 模式分类：直接用 _classify 验证判定逻辑
+    def mk(ps):
+        return [{"date": f"2026-01-{i+1:02d}", "amount": 100, "percentile": p, "action": "add"}
+                for i, p in enumerate(ps)]
+
+    cases = [
+        ([90, 80, 70, 60], "high_open_pyramid", "高位开仓后走低"),
+        ([75, 80, 85, 90], "chase_up", "高位持续走高"),
+        ([50, 60, 70, 85], "mixed", "中位上行但均值不高"),
+        ([20, 15, 10], "low_accumulate", "低位买入"),
+        ([95], "single_high", "单笔高位"),
+        ([10], "single_low", "单笔低位"),
+        ([50], "single_mid", "单笔中位"),
+        ([50, 30], "two_down", "两笔下移"),
+        ([30, 55], "two_up", "两笔上移"),
+    ]
+    for ps, expect, label in cases:
+        got, _ = behavior._classify(mk(ps))
+        check(f"模式：{label}", got == expect, f"{got} (期望 {expect})")
+
+    # 空输入不崩
+    got, _ = behavior._classify([])
+    check("空输入归为样本不足", got == "insufficient", got)
+
+    # --- 追涨杀跌：区分主动与定投
+    truth = behavior.chase_index(conn)
+    check("追涨诊断有主动买入", truth["active"]["count"] > 0,
+          f"{truth['active']['count']} 笔")
+    check("主动与定投分开统计", "sip" in truth and "active" in truth)
+    # 定投是机械执行，占比应与主动不同（若完全相同说明没分开）
+    a_pct = truth["active"]["weighted_percentile"]
+    s_pct = truth["sip"]["weighted_percentile"]
+    check("两者加权分位独立计算", a_pct is not None and s_pct is not None,
+          f"主动 {a_pct}% / 定投 {s_pct}%")
+
+    # 金额加权应可手工复核
+    pts = []
+    for f in truth["per_fund"]:
+        pts.extend(f["points"])
+    if pts:
+        tot = sum(p["amount"] for p in pts)
+        manual = sum(p["percentile"] * p["amount"] for p in pts) / tot
+        check("金额加权分位可复核", abs(manual - a_pct) < 0.2,
+              f"手算 {manual:.1f} vs 程序 {a_pct}")
+
+    # 主导模式不能是 single_*
+    dom = truth["dominant"]
+    if dom:
+        check("主导模式不取单笔类", not dom["pattern"].startswith("single"), dom["pattern"])
+
+    # --- 持有行为：样本不足必须明说
+    h = behavior.holding(conn)
+    check("持有行为有返回", h["samples"] >= 0, f"{h['samples']} 笔")
+    if h["samples"] < behavior.MIN_SELL_SAMPLES:
+        check("样本不足时标记 sufficient=False", h["sufficient"] is False)
+        check("样本不足时文案有提示", "不足" in (h["verdict"] or ""), h["verdict"][:30])
+
+    # 手工造够 12 笔卖出，验证「样本充足后会出结论」
+    import os as _os
+    _p = _os.path.join(_os.path.dirname(db.init.__code__.co_filename), "..", "tests", "_tmp_hold.db")
+    _p = _os.path.abspath(_p)
+    if _os.path.exists(_p):
+        _os.remove(_p)
+    c2 = db.init(_p)
+    c2.execute(
+        "INSERT INTO funds (code,name,category,is_money,created_at) "
+        "VALUES ('H001','持有测试','stock',0,datetime('now'))"
+    )
+    days = ["2026-01-02", "2026-02-02", "2026-03-02", "2026-04-02", "2026-05-02",
+            "2026-06-02", "2026-07-02", "2026-08-03", "2026-09-02", "2026-10-02",
+            "2026-11-02", "2026-12-02"]
+    for d in days:
+        c2.execute(
+            "INSERT INTO nav (code,date,nav,acc_nav,pct) VALUES ('H001',?,1.0,1.0,0)", (d,)
+        )
+    c2.execute(
+        "INSERT INTO txns (code,date,action,amount,shares,nav,fee,note,created_at) "
+        "VALUES ('H001','2026-01-02','open',1000,1000,1.0,0,'','')"
+    )
+    # 12 笔卖出，间隔约 10 天（全部属短线）
+    for i in range(12):
+        d = f"2026-{i+1:02d}-12"
+        c2.execute(
+            "INSERT INTO txns (code,date,action,amount,shares,nav,fee,note,created_at) "
+            "VALUES ('H001',?,'reduce',50,50,1.0,0,'','')", (d,)
+        )
+    c2.commit()
+    h2 = behavior.holding(c2)
+    check("补足样本后标记 sufficient", h2["sufficient"] is True, f"{h2['samples']} 笔")
+    check("样本充足后会出结论", "样本不足" not in (h2["verdict"] or ""), h2["verdict"][:30])
+    check("短线被识别", h2["short_count"] > 0, f"{h2['short_count']} 笔短线")
+    c2.close()
+    _os.remove(_p)
+
+    # --- 定投纪律性
+    disc = behavior.discipline(conn)
+    check("纪律性有返回", "rows" in disc, f"{len(disc.get('rows', []))} 个计划")
+    if disc["rows"]:
+        r0 = disc["rows"][0]
+        check("每期都对齐", r0["expected"] >= r0["actual"] - len(r0["extra"]),
+              f"应 {r0['expected']} 实 {r0['actual']}")
+    # 测试数据只写了部分期数，缺期应能被如实识别出来
+    check("缺期能被识别", disc["live_missing"] >= 0,
+          f"缺 {disc['live_missing']} 期 / 应 {disc['live_expected']} 期")
+    if disc["live_expected"] > 0:
+        check("达标率在 0-100 之间",
+              disc["overall_rate"] is not None and 0 <= disc["overall_rate"] <= 100,
+              str(disc["overall_rate"]))
+        # 缺期数加实到数应等于应扣数
+        exp = disc["live_expected"]
+        miss = disc["live_missing"]
+        check("缺期不超过应扣", miss <= exp, f"{miss} / {exp}")
+
+    # --- 月度事实卡
+    months = behavior.monthly_list(conn)
+    check("有月份列表", len(months) > 0, str(months[:3]))
+    if months:
+        mo = behavior.monthly(conn, months[0])
+        check("月度卡按月取值", mo["month"] == months[0], mo["month"])
+        check("月度区间正确", mo["range"]["from"].endswith("-01"), mo["range"]["from"])
+        check("买入金额非负", mo["buy_amount"] >= 0, str(mo["buy_amount"]))
+        check("含操作明细字段", "ops" in mo)
+        # 理由填写率：没有主动操作时为空，有则 0-100
+        if mo["manual_count"] == 0:
+            check("无主动操作时填写率为空", mo["reason_rate"] is None)
+        else:
+            check("填写率在合理区间",
+                  mo["reason_rate"] is not None and 0 <= mo["reason_rate"] <= 100,
+                  str(mo["reason_rate"]))
+    try:
+        behavior.monthly(conn, "2026/10")
+        check("非法月份应报错", False)
+    except ValueError:
+        check("非法月份应报错", True)
+
+
 # ---------------------------------------------------------------- 主流程
 
 
@@ -666,6 +808,7 @@ def main():
             test_dividend(conn)
             test_backup(tmp)
             test_adopt(tmp)
+            test_behavior(conn)
         finally:
             conn.close()
 

@@ -89,6 +89,22 @@
 
     <div class="panel">
       <div class="panel-head">
+        <h2>行为诊断</h2>
+        <span class="hint" id="behavior-hint"></span>
+      </div>
+      <div id="behavior"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>月度事实卡</h2>
+        <div class="range-group" id="month-group"></div>
+      </div>
+      <div id="monthly"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
         <h2>收益归因</h2>
         <span class="hint" id="attr-hint"></span>
       </div>
@@ -370,7 +386,12 @@
         <div class="field"><label>成交净值</label><input type="number" id="f-nav" step="0.0001" placeholder="留空取当日净值"></div>
         <div class="field"><label>手续费（元）</label><input type="number" id="f-fee" step="0.01" placeholder="0"></div>
       </div>
-      <div class="field"><label>备注</label><input type="text" id="f-note" placeholder="为什么做这笔操作，比如「跌 3% 补仓」"></div>
+      <div class="field">
+        <label>决策理由<span class="opt-tag">可选 · 建议填</span></label>
+        <textarea id="f-reason" rows="2" placeholder="当时为什么做这笔操作？例：跌到估值低位了 / 涨太多想减一点"></textarea>
+        <div class="field-hint">半年后回看，这句话比任何数字都有用。程序会把它和你的实际买入位置做对照。定投可不填。</div>
+      </div>
+      <div class="field"><label>备注</label><input type="text" id="f-note" placeholder="可选，如 工资到账后买入"></div>
       <div class="hint-box" id="f-hint"></div>
     </div>
     <div class="modal-foot">

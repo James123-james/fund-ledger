@@ -37,9 +37,20 @@ def _money(v, digits=2, dash="—"):
 
 
 def _pct(v, dash="-"):
+    """带正负号的百分比，用于涨跌幅、收益率这类有方向的量。"""
     if v is None:
         return dash
     return f"{v:+.2f}%"
+
+
+def _ratio(v, dash="—"):
+    """不带符号的百分比，用于占比、达标率这类无方向的量。
+
+    混用 _pct 会出现「达标率 +100.00%」这种读起来别扭的写法。
+    """
+    if v is None:
+        return dash
+    return f"{v:.2f}%"
 
 
 def _month_key(d):
@@ -355,6 +366,95 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
         L.append("")
     else:
         L.append("_暂无可评估的买卖点。_")
+        L.append("")
+
+    # 3.5 行为诊断
+    from . import behavior as _bh
+
+    bh = _bh.chase_index(conn)
+    L.append("### 3.5 行为诊断（主动买入 vs 定投）")
+    L.append("")
+    a, sp = bh["active"], bh["sip"]
+    if a["count"]:
+        L.append(
+            "**关键区分**：主动买入是判断，定投是机械执行。混在一起统计会稀释真实倾向。"
+        )
+        L.append("")
+        L.append("| 类型 | 笔数 | 金额 | 高位(≥70%) | 低位(≤30%) | 金额加权分位 |")
+        L.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+        for label, x in (("主动买入", a), ("定投", sp)):
+            L.append(
+                f"| {label} | {x['count']} | {_money(x['amount'])} | "
+                f"{_ratio(x['high_pct'])} | "
+                f"{_ratio(x['low_pct'])} | "
+                f"{x['weighted_percentile'] if x['weighted_percentile'] is not None else '—'}% |"
+            )
+        L.append("")
+        if bh["verdict"]:
+            L.append(f"结论：{bh['verdict']}")
+            L.append("")
+        if bh["advice"]:
+            L.append(f"> {bh['advice']}")
+            L.append("")
+        if bh.get("gap") and bh["gap"]["weighted"] is not None:
+            g = bh["gap"]["weighted"]
+            L.append(
+                f"> 主动买入与定投的加权分位相差 {g:+.1f} 个百分点。"
+                + ("正值说明你的主动判断买得比机械定投更贵。" if g > 0 else "负值说明主动判断更便宜。")
+            )
+            L.append("")
+
+        L.append("**逐基金模式**（定投不参与）")
+        L.append("")
+        L.append("| 代码 | 名称 | 笔数 | 金额 | 首笔分位 | 末笔分位 | 模式 |")
+        L.append("| --- | --- | ---: | ---: | ---: | ---: | --- |")
+        for f in bh["per_fund"]:
+            L.append(
+                f"| {f['code']} | {f['name']} | {f['count']} | {_money(f['amount'])} | "
+                f"{f['first_percentile']}% | {f['last_percentile']}% | {f['pattern_name']} |"
+            )
+        L.append("")
+    else:
+        L.append("_还没有主动买入记录。_")
+        L.append("")
+
+    # 3.6 定投纪律性与持有行为
+    disc = _bh.discipline(conn)
+    hold = _bh.holding(conn)
+    L.append("### 3.6 定投纪律性与持有行为")
+    L.append("")
+    if disc.get("live_expected"):
+        L.append(f"**定投纪律性**：{disc['verdict']}")
+        L.append("")
+        L.append("| 基金 | 周期 | 应扣 | 实扣 | 达标率 | 状态 |")
+        L.append("| --- | --- | ---: | ---: | ---: | --- |")
+        for r in disc["rows"]:
+            L.append(
+                f"| {r['name']} | {r['freq_name']} | {r['expected']} | {r['actual']} | "
+                f"{_ratio(r['rate'])} | "
+                f"{'进行中' if r['enabled'] else '已结束'} |"
+            )
+        L.append("")
+    else:
+        L.append("_没有进行中的定投计划。_")
+        L.append("")
+
+    L.append(f"**持有行为**：{hold['verdict']}")
+    L.append("")
+    if hold.get("sells"):
+        L.append("| 卖出日 | 基金 | 操作 | 持有天数 | 卖出分位 | 决策理由 |")
+        L.append("| --- | --- | --- | ---: | ---: | --- |")
+        for x in hold["sells"]:
+            L.append(
+                f"| {x['date']} | {x['name']} | {x['action_name']} | {x['days']} | "
+                f"{x['percentile'] if x['percentile'] is not None else '—'}% | "
+                f"{x['reason'] or '（未填）'} |"
+            )
+        L.append("")
+    if not hold.get("sufficient"):
+        L.append(
+            "> 卖出样本不足，" "上述持有天数仅作明细参考，不构成结论。"
+        )
         L.append("")
 
     # 4. 操作流水
