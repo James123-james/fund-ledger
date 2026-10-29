@@ -84,7 +84,7 @@ body {
 .tabs {
   display: flex; gap: 4px;
   padding: 10px 24px 0;
-  max-width: 1160px; margin: 0 auto;
+  max-width: 1240px; margin: 0 auto;
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
@@ -104,7 +104,7 @@ body {
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* ---------- 主体 ---------- */
-main { max-width: 1160px; margin: 0 auto; padding: 22px 24px; }
+main { max-width: 1240px; margin: 0 auto; padding: 22px 24px; }
 .view { display: none; animation: fade .2s ease; }
 .view.active { display: block; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -135,7 +135,7 @@ main { max-width: 1160px; margin: 0 auto; padding: 22px 24px; }
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 20px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   box-shadow: var(--shadow);
 }
 .panel.flush { padding: 0; overflow: hidden; }
@@ -312,7 +312,8 @@ td.name .code { font-size: 11.5px; color: var(--ink-3); font-weight: 500; margin
 .range-group button.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 
 /* ---------- 偏离条 ---------- */
-.alloc-row { margin-bottom: 15px; }
+.alloc-row { margin-bottom: 11px; }
+.alloc-row:last-of-type { margin-bottom: 0; }
 .alloc-head {
   display: flex; justify-content: space-between; align-items: baseline;
   font-size: 13px; margin-bottom: 6px; gap: 10px;
@@ -921,4 +922,115 @@ textarea#f-reason {
 @media (max-width: 480px) {
   .mc-stats { grid-template-columns: 1fr; }
   .mc-op-name { font-size: 12px; }
+}
+
+/* ============================================================
+   布局 v2：分段标签、逐基金网格、双列操作列表
+   ============================================================ */
+
+/* ---------- 分段标签：把长页面切成「持仓 / 业绩 / 行为」三段 ---------- */
+.sec-label {
+  display: flex; align-items: center; gap: 12px;
+  margin: 24px 0 12px;
+  padding-left: 2px;
+}
+.sec-label span {
+  font-size: 11.5px; font-weight: 700; letter-spacing: .12em;
+  color: var(--ink-3); text-transform: uppercase;
+  white-space: nowrap;
+}
+.sec-label i {
+  flex: 1; height: 1px; background: var(--line);
+  display: block;
+}
+/* 两处标签保持同样的上间距，否则分段节奏不一致 */
+
+/* ---------- 逐基金模式：单列堆叠改自适应网格 ---------- */
+.pat-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(288px, 1fr));
+  gap: 9px;
+}
+.pat-list-title { grid-column: 1 / -1; margin-bottom: 0; }
+.pat-card { margin-bottom: 0; height: 100%; }
+.pat-spark { margin-top: 2px; }
+
+/* ---------- 纪律性 + 持有行为：宽屏并排 ---------- */
+.bh-footer {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 0 26px; align-items: start;
+}
+.bh-footer .bh-block { margin-top: 16px; padding-top: 13px; }
+
+/* ---------- 月度卡操作列表：双列 ---------- */
+.mc-ops {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 24px;
+  align-content: start;
+}
+.mc-ops-title { grid-column: 1 / -1; }
+
+@media (max-width: 1080px) {
+  .bh-footer { grid-template-columns: 1fr; gap: 0; }
+  .bh-footer .bh-block + .bh-block { margin-top: 14px; }
+}
+
+@media (max-width: 760px) {
+  .pat-list { grid-template-columns: 1fr; }
+  .mc-ops { grid-template-columns: 1fr; }
+  .sec-label { margin: 18px 0 10px; }
+  .sec-label span { font-size: 11px; }
+}
+
+/* ---------- 中等宽度：表格收紧，尽量不出现内部横向滚动 ----------
+   「收益质量」是 6 列表格，完整展示约需 890px。容器在 720–1030 之间
+   会差一点放不下，收紧内边距比让用户横向拖动更友好。 */
+@media (min-width: 721px) and (max-width: 1280px) {
+  th { padding: 9px 9px; }
+  td { padding: 9px 9px; }
+  td.num, th.num { font-size: 12px; }
+  /* 中等宽度下备注列再收一档，把空间让给基金名，避免名称折行把行高拉到 65px */
+  #txns td.td-note { max-width: 140px; }
+}
+
+/* ---------- 并排面板：内容上互为因果/同类的两块放一行 ----------
+   只用于高度接近的面板，避免出现半列空白。窄屏自动回退为堆叠。 */
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+  align-items: start;
+}
+.pair > .panel { margin-bottom: 0; }
+
+@media (max-width: 980px) {
+  .pair { grid-template-columns: 1fr; }
+}
+
+/* ---------- 流水备注列：长备注截断，完整内容放 title ----------
+   备注原来会占到 300px 以上，把基金列挤到 248px 导致名称换行，
+   每行因此变成 65px。截断后行高回落到单行。 */
+#txns td.td-note {
+  max-width: 210px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 流水展开控件 ---------- */
+.txn-more {
+  display: flex; align-items: center; gap: 9px;
+  flex-wrap: wrap;
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--line-2);
+}
+.txn-more .spacer { flex: 1; }
+.txn-more .hint { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 720px) {
+  .txn-more { padding: 13px 14px 15px; gap: 8px; }
+  .txn-more .spacer { display: none; }
+  .txn-more .btn { flex: 1 1 auto; }
 }

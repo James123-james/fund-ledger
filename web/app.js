@@ -16,6 +16,7 @@ const state = {
   curTpl: null,
   chartRange: '1y',
   txnFilter: { from: '', to: '', code: '' },
+  txnShown: 40,   // 流水默认展示条数，超出部分按需展开
   sipPlans: [],
   fundDetail: null,
   dividends: null,
@@ -319,8 +320,7 @@ function renderBehavior(raw) {
       ${(d.per_fund || []).map(patternCard).join('')}
     </div>
 
-    ${discRow(disc)}
-    ${holdRow(hold)}
+    <div class="bh-footer">${discRow(disc)}${holdRow(hold)}</div>
 
     <div class="hint-box" style="margin-top:14px">
       分位＝成交净值在该基金区间最低与最高之间的位置。70% 以上算高位，30% 以下算低位。
@@ -1388,6 +1388,10 @@ $$('#chart-range button').forEach((b) => {
    操作流水
    ============================================================ */
 
+/* 流水默认展示条数。71 笔一次铺开会把页面拉到 1.5 万像素（手机上），
+   默认只显示最近的一屏，其余按需展开。 */
+const TXN_PAGE = 40;
+
 async function loadTxns() {
   const f = state.txnFilter;
   const qs = new URLSearchParams();
@@ -1421,7 +1425,9 @@ function renderTxns() {
   sum.innerHTML = `共 ${list.length} 笔 ｜ 买入 ${buys.length} 笔 <span class="cur">${money(buyAmt)}</span> ｜ 卖出 ${sells.length} 笔 <span class="cur">${money(sellAmt)}</span>`;
 
   const actionName = state.meta.actions;
-  const rows = list.map((t) => `
+  const shown = Math.min(state.txnShown, list.length);
+  const visible = list.slice(0, shown);
+  const rows = visible.map((t) => `
     <tr>
       <td data-label="日期">${t.date}</td>
       <td class="name full" data-label="基金">${esc(t.fund_name)}<span class="code">${t.code}</span></td>
@@ -1431,7 +1437,7 @@ function renderTxns() {
       <td class="num hide-m" data-label="成交净值">${num(t.nav, 4)}</td>
       <td class="num ${cls(t.day_pct)}" data-label="当日涨跌">${pct(t.day_pct)}</td>
       <td class="num hide-m" data-label="手续费">${money(t.fee)}</td>
-      <td data-label="备注" class="muted" style="font-size:12px">${esc(t.note || '')}</td>
+      <td data-label="备注" class="muted td-note" style="font-size:12px" title="${esc(t.note || '')}">${esc(t.note || '')}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="icon-btn" style="font-size:13px;padding:3px 6px" data-edit="${t.id}" title="编辑">改</button>
         <button class="icon-btn" style="font-size:13px;padding:3px 6px" data-del="${t.id}" title="删除">删</button>
@@ -1447,7 +1453,38 @@ function renderTxns() {
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${list.length > TXN_PAGE ? `
+    <div class="txn-more">
+      <span class="hint">显示 ${shown} / ${list.length} 笔</span>
+      <div class="spacer"></div>
+      ${shown < list.length
+        ? `<button class="btn ghost sm" id="txn-more-btn">再显示 ${Math.min(TXN_PAGE, list.length - shown)} 笔</button>
+           <button class="btn ghost sm" id="txn-all-btn">显示全部</button>`
+        : `<button class="btn ghost sm" id="txn-collapse-btn">收起到最近 ${TXN_PAGE} 笔</button>`}
+    </div>` : ''}`;
+
+  const moreBtn = $('#txn-more-btn');
+  if (moreBtn) {
+    moreBtn.addEventListener('click', () => {
+      state.txnShown += TXN_PAGE;
+      renderTxns();
+    });
+  }
+  const allBtn = $('#txn-all-btn');
+  if (allBtn) {
+    allBtn.addEventListener('click', () => {
+      state.txnShown = list.length;
+      renderTxns();
+    });
+  }
+  const collapseBtn = $('#txn-collapse-btn');
+  if (collapseBtn) {
+    collapseBtn.addEventListener('click', () => {
+      state.txnShown = TXN_PAGE;
+      renderTxns();
+    });
+  }
 
   box.querySelectorAll('[data-edit]').forEach((b) => {
     b.addEventListener('click', () => {
@@ -1896,6 +1933,7 @@ function bindEvents() {
     state.txnFilter.from = $('#txn-from').value;
     state.txnFilter.to = $('#txn-to').value;
     state.txnFilter.code = $('#txn-fund').value;
+    state.txnShown = TXN_PAGE;   // 换筛选条件后回到首屏条数
     loadTxns();
   };
   ['#txn-from', '#txn-to', '#txn-fund'].forEach((s) => $(s).addEventListener('change', applyFilter));
