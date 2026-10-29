@@ -18,6 +18,7 @@ const state = {
   txnFilter: { from: '', to: '', code: '' },
   sipPlans: [],
   fundDetail: null,
+  dividends: null,
 };
 
 /* ---------------- 格式化 ---------------- */
@@ -114,7 +115,7 @@ function switchView(name) {
   if (name === 'txns') loadTxns();
   if (name === 'analysis') loadAnalysis();
   if (name === 'sip') loadSipPlans();
-  if (name === 'settings') { loadFunds(); loadBenchList(); }
+  if (name === 'settings') { loadFunds(); loadBenchList(); loadBackupInfo(); scanDividends(); }
   if (name === 'export') prepareExport();
 }
 $$('.tab, .bn').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
@@ -619,6 +620,139 @@ function renderFundTxns(d) {
           <td class="muted" data-label="备注" style="font-size:12px">${esc(m.note)}</td>
         </tr>`).join('')}</tbody>
     </table></div>`;
+}
+
+/* ---------------- 分红识别 ---------------- */
+
+async function scanDividends() {
+  const box = $('#dividend-result');
+  if (!box) return;
+  box.innerHTML = '<div class="empty">扫描中…</div>';
+  try {
+    const data = await api('/api/dividends');
+    state.dividends = data;
+    renderDividends(data);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">识别失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderDividends(data) {
+  const box = $('#dividend-result');
+  if (!box) return;
+  const s = data.summary || {};
+  const items = data.items || [];
+
+  if (!items.length) {
+    box.innerHTML = `<div class="empty">没有检测到与持仓相关的分红。
+      如果你持有的基金从未分红，或分红期间没有持仓，这里会是空的。</div>`;
+    return;
+  }
+
+  const pending = items.filter((x) => x.status === 'pending');
+  const rows = items.map((d) => {
+    const isP = d.status === 'pending';
+    return `<tr class="${isP ? '' : 'row-dim'}">
+      <td data-label="基金"><span class="link-fund" data-detail="${d.code}">${esc(d.name)}</span>
+        <span class="code">${d.code}</span></td>
+      <td data-label="除息日">${d.ex_date}</td>
+      <td class="num" data-label="每份分红">${num(d.per_share, 4)}</td>
+      <td class="num" data-label="登记日份额">${num(d.shares)}</td>
+      <td class="num" data-label="应得现金"><b>${money(d.cash)}</b></td>
+      <td class="num" data-label="再投份额">${num(d.reinvest_shares, 4)}</td>
+      <td data-label="状态">${isP
+        ? '<span class="pill act-open">未记录</span>'
+        : `<span class="pill">已记录 ${money(d.existing_amount)}</span>`}</td>
+    </tr>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="div-summary">
+      <span>共检测到 <b>${s.total}</b> 次</span>
+      <span>未记录 <b class="up">${s.pending}</b> 次</span>
+      <span>待入账 <b>${money(s.pending_cash)}</b></span>
+    </div>
+    ${pending.length ? `
+    <div class="div-actions">
+      <span class="hint">选择分红方式后入账。平台默认哪种，就选哪种。</span>
+      <button class="btn primary sm" id="btn-div-cash">全部按现金分红入账</button>
+      <button class="btn ghost sm" id="btn-div-reinvest">全部按红利再投入账</button>
+    </div>` : ''}
+    <div class="table-wrap">
+      <table class="responsive">
+        <thead><tr>
+          <th>基金</th><th>除息日</th><th class="num">每份分红</th>
+          <th class="num">登记日份额</th><th class="num">应得现金</th>
+          <th class="num">再投份额</th><th>状态</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${pending.some((x) => x.suspicious) ? `
+      <div class="hint-box warn-box" style="margin-top:12px">
+        有分红单次超过净值的 20%，可能是份额折算被误判为分红，请先核对再入账。
+      </div>` : ''}
+    <div class="hint-box" style="margin-top:12px">
+      除息日当天净值已扣除分红，份额按<b>权益登记日</b>（前一交易日）计算。
+      已入账的分红会自动标记，不会重复写入。
+    </div>`;
+
+  bindFundLinks(box);
+  if (pending.length) {
+    $('#btn-div-cash').addEventListener('click', () => applyDividends('cash', pending));
+    $('#btn-div-reinvest').addEventListener('click', () => applyDividends('reinvest', pending));
+  }
+}
+
+async function applyDividends(mode, items) {
+  const total = items.reduce((a, b) => a + b.cash, 0);
+  const label = mode === 'cash' ? '现金分红' : '红利再投';
+  if (!confirm(`将 ${items.length} 次分红按「${label}」入账，合计 ${total.toFixed(2)} 元。\n\n继续？`)) return;
+  try {
+    loading(true);
+    const payload = items.map((d) => ({
+      code: d.code, ex_date: d.ex_date, mode,
+    }));
+    const r = await post('/api/dividends/apply', { items: payload });
+    const okN = r.written;
+    toast(okN ? `已入账 ${okN} 次分红，合计 ${money(r.total_amount)}` : '没有写入任何记录', !okN);
+    await scanDividends();
+    loadOverview();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    loading(false);
+  }
+}
+
+/* ---------------- 自动备份 ---------------- */
+
+async function loadBackupInfo() {
+  const box = $('#backup-info');
+  if (!box) return;
+  try {
+    const d = await api('/api/backups');
+    if (!d.count) {
+      box.innerHTML = '<div class="empty">还没有备份。下次启动程序时会自动生成一份。</div>';
+      return;
+    }
+    const items = (d.items || []).slice(0, 5).map((i) =>
+      `<div class="bk-row"><span>${i.name}</span>
+        <span class="flat">${(i.size / 1024).toFixed(0)} KB · ${i.mtime}</span></div>`).join('');
+    box.innerHTML = `
+      <div class="bk-head">
+        <span><b>${d.count}</b> 份自动备份，共 ${(d.total_size / 1024 / 1024).toFixed(1)} MB</span>
+        <span class="flat">保留最近 ${d.keep} 份 · 每日一份</span>
+      </div>
+      ${items}
+      ${d.count > 5 ? `<div class="bk-more flat">…还有 ${d.count - 5} 份</div>` : ''}
+      <div class="hint-box" style="margin-top:10px">
+        存放于 <code>${esc(d.dir)}</code>。恢复方法：关闭程序，
+        把想恢复的那份复制为 <code>fund.db</code> 覆盖原文件，再重新启动。
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`;
+  }
 }
 
 /* ---------------- 对账校准 ---------------- */
@@ -1565,6 +1699,19 @@ function bindEvents() {
   // 添加基金
   $('#btn-add-fund').addEventListener('click', () => openModal('#modal-fund'));
   $('#btn-reconcile').addEventListener('click', openReconcile);
+
+  // 分红识别
+  $('#btn-scan-div').addEventListener('click', scanDividends);
+
+  // 备份
+  $('#btn-backup-now').addEventListener('click', async () => {
+    try {
+      loading(true);
+      const r = await post('/api/backups', {});
+      toast(`已生成 ${r.name}（${(r.size / 1024).toFixed(0)} KB）`);
+      await loadBackupInfo();
+    } catch (e) { toast(e.message, true); } finally { loading(false); }
+  });
 
   // 定投计划
   $('#btn-sip-new').addEventListener('click', () => openSipModal(null));
