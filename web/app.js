@@ -612,7 +612,9 @@ function renderSipPlans() {
       ${p.reason
         ? `<div class="sip-reason" title="${esc(p.reason)}"><span class="sip-reason-k">决策理由</span>${esc(p.reason)}</div>`
         : `<div class="sip-reason empty-reason">决策理由未填——为什么开始这笔定投？</div>`}
-      ${p.note ? `<div class="sip-note">${esc(p.note)}</div>` : ''}
+      ${p.note && p.note.trim() !== (p.reason || '').trim()
+        ? `<div class="sip-note">${esc(p.note)}</div>`
+        : ''}
       <div class="sip-actions">
         <button class="btn ghost sm" data-run="${p.id}">补生成</button>
         <button class="btn ghost sm" data-edit="${p.id}">编辑</button>

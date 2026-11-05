@@ -311,6 +311,20 @@ def test_sip(conn):
     inherited = [c for c in rr["created"] if (c.get("reason") or "").strip()]
     check("定投流水不继承计划理由", not inherited, f"{len(inherited)} 条继承了")
 
+    # 备注与理由内容相同时，界面不应重复显示。
+    # 这是真实场景：历史备注里本就写着判断依据，迁移时会被复制到理由字段。
+    pid_dup = sip.save_plan(conn, None, {
+        "code": "T001", "amount": 30, "fee_rate": 0,
+        "freq": "monthly", "monthday": 5, "start_date": "2026-11-01",
+        "note": "同一句话", "reason": "同一句话",
+    })
+    pd = [x for x in sip.list_plans(conn) if x["id"] == pid_dup][0]
+    check("备注与理由可并存", pd["note"] == "同一句话" and pd["reason"] == "同一句话",
+          f"note={pd['note']!r} reason={pd['reason']!r}")
+    # 二者相等时，渲染层约定不显示备注（前端按 trim 后比较）
+    check("相同时可识别为重复",
+          pd["note"].strip() == pd["reason"].strip(), "trim 后相等")
+
     # 校验：金额必须为正
     try:
         sip.save_plan(conn, None, {"code": "T001", "amount": 0, "freq": "weekly",
