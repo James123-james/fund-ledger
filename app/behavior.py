@@ -348,6 +348,9 @@ def discipline(conn, until=None):
                 "missing": missing,
                 "extra": extra,
                 "rate": rate,
+                # 计划层面的决策理由：为什么开始这笔定投
+                "reason": p.get("reason") or "",
+                "note": p.get("note") or "",
                 "expected_amount": round(len(expected) * p["amount"], 2),
                 "actual_amount": round(
                     sum(

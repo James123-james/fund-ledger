@@ -609,6 +609,9 @@ function renderSipPlans() {
         <div><span class="k">下次扣款</span><span class="v">${p.next_date || '—'}</span></div>
       </div>
       ${p.end_date ? `<div class="sip-note">结束于 ${p.end_date}</div>` : ''}
+      ${p.reason
+        ? `<div class="sip-reason" title="${esc(p.reason)}"><span class="sip-reason-k">决策理由</span>${esc(p.reason)}</div>`
+        : `<div class="sip-reason empty-reason">决策理由未填——为什么开始这笔定投？</div>`}
       ${p.note ? `<div class="sip-note">${esc(p.note)}</div>` : ''}
       <div class="sip-actions">
         <button class="btn ghost sm" data-run="${p.id}">补生成</button>
@@ -658,6 +661,7 @@ function openSipModal(plan) {
   $('#sp-fee').value = plan ? plan.fee_rate : 0.15;
   $('#sp-start').value = plan ? plan.start_date : (state.meta.today || isoDate(new Date()));
   $('#sp-end').value = plan && plan.end_date ? plan.end_date : '';
+  $('#sp-reason').value = plan ? (plan.reason || '') : '';
   $('#sp-note').value = plan ? (plan.note || '') : '';
   $('#sp-enabled').checked = plan ? !!plan.enabled : true;
   $('#btn-del-sip').hidden = !plan;
@@ -881,8 +885,8 @@ function renderFundTxns(d) {
           <td class="num" data-label="净值分位">${m.percentile === null || m.percentile === undefined
             ? '<span class="flat">—</span>'
             : `<span class="${m.percentile > 70 ? 'up' : m.percentile < 30 ? 'down' : 'flat'}">${m.percentile}%</span>`}</td>
-          <td class="muted td-note" data-label="备注" style="font-size:12px" title="${esc(m.note || '')}">${esc(m.note)}</td>
-          <td class="td-reason ${m.reason ? '' : 'flat'}" data-label="决策理由" title="${esc(m.reason || '')}">${m.reason ? esc(m.reason) : '—'}</td>
+          <td class="muted td-note" data-label="备注" style="font-size:12px" title="${esc(m.note || '')}"><span class="clip">${esc(m.note)}</span></td>
+          <td class="td-reason ${m.reason ? '' : 'flat'}" data-label="决策理由" title="${esc(m.reason || '')}">${m.reason ? `<span class="clip">${esc(m.reason)}</span>` : '—'}</td>
         </tr>`).join('')}</tbody>
     </table></div>`;
 }
@@ -1431,15 +1435,22 @@ function renderTxns() {
   const rows = visible.map((t) => `
     <tr>
       <td data-label="日期">${t.date}</td>
-      <td class="name full" data-label="基金">${esc(t.fund_name)}<span class="code">${t.code}</span></td>
+      <td class="name full" data-label="基金" title="${esc(t.fund_name)}">${esc(t.fund_name)}<span class="code">${t.code}</span></td>
       <td data-label="操作"><span class="pill act-${t.action}">${actionName[t.action] || t.action}</span></td>
       <td class="num" data-label="金额">${money(t.amount)}</td>
       <td class="num hide-m" data-label="份额">${num(t.shares)}</td>
       <td class="num hide-m" data-label="成交净值">${num(t.nav, 4)}</td>
       <td class="num ${cls(t.day_pct)}" data-label="当日涨跌">${pct(t.day_pct)}</td>
       <td class="num hide-m" data-label="手续费">${money(t.fee)}</td>
-      <td data-label="备注" class="muted td-note" style="font-size:12px" title="${esc(t.note || '')}">${esc(t.note || '')}</td>
-      <td data-label="决策理由" class="td-reason ${t.reason ? '' : 'flat'}" title="${esc(t.reason || '')}">${t.reason ? esc(t.reason) : '—'}</td>
+      <td data-label="备注" class="muted td-note" style="font-size:12px" title="${esc(t.note || '')}"><span class="clip">${esc(t.note || '')}</span></td>
+      <td data-label="决策理由" class="td-reason ${t.reason || t.plan_id ? '' : 'flat'}"
+          title="${esc(t.reason || t.plan_reason || (t.plan_id ? '由定投计划自动生成，理由记在计划上' : ''))}">${
+        t.reason
+          ? `<span class="clip">${esc(t.reason)}</span>`
+          : t.plan_id
+            ? '<span class="from-plan">定投计划</span>'
+            : '—'
+      }</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="icon-btn" style="font-size:13px;padding:3px 6px" data-edit="${t.id}" title="编辑">改</button>
         <button class="icon-btn" style="font-size:13px;padding:3px 6px" data-del="${t.id}" title="删除">删</button>
@@ -2039,6 +2050,7 @@ function bindEvents() {
       start_date: $('#sp-start').value,
       end_date: $('#sp-end').value || null,
       enabled: $('#sp-enabled').checked,
+      reason: $('#sp-reason').value,
       note: $('#sp-note').value,
     };
     try {
