@@ -678,6 +678,7 @@ def fund_detail(conn, code, date_from=None, date_to=None):
                 "nav": round(nav, 4),
                 "percentile": round(percentile, 1) if percentile is not None else None,
                 "note": t.get("note") or "",
+                "reason": t.get("reason") or "",
             }
         )
 

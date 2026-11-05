@@ -53,6 +53,27 @@ def _ratio(v, dash="—"):
     return f"{v:.2f}%"
 
 
+def _cell(v, dash="—"):
+    """把自由文本塞进 Markdown 表格单元格。
+
+    用户写的备注和决策理由可能包含竖线与换行：
+    - 竖线会被当成列分隔符，把整行拆坏
+    - 换行会让 Markdown 表格结构断裂
+    两者都必须替换掉，否则导出文件在渲染时是错乱的。
+    """
+    if v is None:
+        return dash
+    s = str(v).strip()
+    if not s:
+        return dash
+    return (
+        s.replace("|", "｜")
+        .replace("\r\n", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
 def _month_key(d):
     return d[:7]
 
@@ -159,6 +180,12 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
     L.append("- 当日涨跌幅：该基金在操作当日的净值增长率，正为涨、负为跌；货币基金填「-」")
     L.append("- 收益率：浮动盈亏 ÷ 持仓成本")
     L.append("")
+    L.append("**备注与决策理由的区别**")
+    L.append("")
+    L.append("- 备注：事实性说明，如「记录日期为周日，按下一交易日净值确认」「红利再投（自动识别）」")
+    L.append("- 决策理由：录入当时写下的**判断依据**，如「估值到低位」「跌破均线止损」。"
+             "这是唯一的原始意图记录，复盘时不要用它评判结果对错，只用它还原当时的决策条件")
+    L.append("")
     L.append("---")
     L.append("")
 
@@ -238,7 +265,7 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
         L.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
         for r in rr:
             ann = _pct(r["annualized"]) if r["annualized"] is not None else "—"
-            note = r["reason"] or ""
+            note = _cell(r["reason"], "")
             L.append(
                 f"| {r['code']} | {r['name']} | {_money(r['invested'])} | "
                 f"{_money(r['pnl'])} | {_pct(r['cumulative'])} | {ann} | {r['days']} | {note} |"
@@ -448,7 +475,7 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
             L.append(
                 f"| {x['date']} | {x['name']} | {x['action_name']} | {x['days']} | "
                 f"{x['percentile'] if x['percentile'] is not None else '—'}% | "
-                f"{x['reason'] or '（未填）'} |"
+                f"{_cell(x['reason'], '（未填）')} |"
             )
         L.append("")
     if not hold.get("sufficient"):
@@ -461,14 +488,31 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
     L.append("## 4. 操作流水")
     L.append("")
     if d["txns"]:
-        L.append("| # | 日期 | 代码 | 名称 | 操作 | 金额(元) | 份额 | 成交净值 | 手续费(元) | 当日涨跌幅 | 备注 |")
-        L.append("| ---: | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+        L.append(
+            "| # | 日期 | 代码 | 名称 | 操作 | 金额(元) | 份额 | 成交净值 | "
+            "手续费(元) | 当日涨跌幅 | 备注 | 决策理由 |"
+        )
+        L.append(
+            "| ---: | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |"
+        )
         for i, t in enumerate(d["txns"], 1):
             L.append(
                 f"| {i} | {t['date']} | {t['code']} | {t['fund_name']} | "
                 f"{db.ACTIONS.get(t['action'], t['action'])} | {_fmt(t['amount'])} | "
                 f"{_fmt(t['shares'], 2)} | {_fmt(t['nav'], 4)} | {_fmt(t['fee'])} | "
-                f"{_pct(t.get('day_pct'))} | {(t.get('note') or '').replace('|', '/')} |"
+                f"{_pct(t.get('day_pct'))} | {_cell(t.get('note'))} | {_cell(t.get('reason'))} |"
+            )
+        L.append("")
+        with_reason = [t for t in d["txns"] if (t.get("reason") or "").strip()]
+        if with_reason:
+            L.append(
+                f"> 决策理由：区间内 {len(with_reason)}/{len(d['txns'])} 笔填写了理由。"
+                "这是录入当时的判断依据，不是事后总结。"
+            )
+        else:
+            L.append(
+                "> 决策理由：本区间没有填写记录。录入时（尤其卖出）顺手写一句，"
+                "复盘时才能还原当时的判断。"
             )
         L.append("")
         buys = [t for t in d["txns"] if t["action"] in db.BUY_ACTIONS]
@@ -617,7 +661,7 @@ def to_csv(conn, date_from, date_to):
         [
             "日期", "基金代码", "基金名称", "资产类别", "操作类型",
             "金额(元)", "份额", "成交净值", "手续费(元)",
-            "当日涨跌幅(%)", "当日净值", "备注",
+            "当日涨跌幅(%)", "当日净值", "备注", "决策理由",
         ]
     )
     for t in d["txns"]:
@@ -634,7 +678,8 @@ def to_csv(conn, date_from, date_to):
                 f"{t['fee']:.2f}",
                 f"{t['day_pct']:.2f}" if t.get("day_pct") is not None else "",
                 f"{t['day_nav']:.4f}" if t.get("day_nav") is not None else "",
-                (t.get("note") or "").replace("\n", " "),
+                (t.get("note") or "").replace("\r\n", " ").replace("\n", " "),
+                (t.get("reason") or "").replace("\r\n", " ").replace("\n", " "),
             ]
         )
     # UTF-8 BOM，Excel 双击直接正确识别中文
