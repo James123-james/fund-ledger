@@ -571,7 +571,12 @@
         <div class="field"><label>起始日期</label><input type="date" id="sp-start"></div>
         <div class="field"><label>结束日期（可空）</label><input type="date" id="sp-end"></div>
       </div>
-      <div class="field"><label>备注</label><input type="text" id="sp-note" placeholder="如 每月发薪日定投"></div>
+      <div class="field">
+        <label>决策理由<span class="opt-tag">可选 · 建议填</span></label>
+        <textarea id="sp-reason" rows="2" placeholder="为什么决定开始这个定投？例：看好长期，先用小额定投试水；或 现在估值不高，跌到 924 前也才 10%"></textarea>
+        <div class="field-hint">这是对整个计划的判断。每一期扣款是机械执行，不会再重复问你要理由。</div>
+      </div>
+      <div class="field"><label>备注</label><input type="text" id="sp-note" placeholder="如 每月发薪日定投（事实性说明）"></div>
       <label class="checkbox-line"><input type="checkbox" id="sp-enabled" checked><span>启用</span></label>
       <div class="hint-box">扣款日落在周末或法定假日时，自动顺延到下一个交易日。已存在的同基金同日定投记录不会重复生成。</div>
     </div>

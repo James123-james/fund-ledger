@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS sip_plans (
     holiday_mode TEXT NOT NULL DEFAULT 'shift',  -- 扣款日遇假期：shift 顺延 / skip 跳过
     enabled     INTEGER NOT NULL DEFAULT 1,
     note        TEXT,
+    reason      TEXT,                     -- 决策理由：为什么开始这个计划
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sip_code ON sip_plans(code);
@@ -207,6 +208,9 @@ def _migrate(conn):
         conn.execute(
             "ALTER TABLE sip_plans ADD COLUMN holiday_mode TEXT NOT NULL DEFAULT 'shift'"
         )
+        conn.commit()
+    if sip_cols and "reason" not in sip_cols:
+        conn.execute("ALTER TABLE sip_plans ADD COLUMN reason TEXT")
         conn.commit()
 
 

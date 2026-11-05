@@ -270,6 +270,12 @@ def handle_api(method, path, query, body, conn):
         code = (query.get("code") or [None])[0]
         items = engine.load_txns(conn, code=code, date_from=df, date_to=dt)
         funds = engine.load_funds(conn)
+        # 定投计划生成的流水，其「为什么」记在计划上而不是单期上。
+        # 这里把计划理由带出来，界面才能解释清楚「这行为什么没有决策理由」。
+        plan_reasons = {
+            r["id"]: (r["reason"] or "")
+            for r in conn.execute("SELECT id, reason FROM sip_plans").fetchall()
+        }
         nav_cache = {}
         for t in items:
             c = t["code"]
@@ -288,6 +294,8 @@ def handle_api(method, path, query, body, conn):
             )
             t["fund_name"] = funds.get(c, {}).get("name", c)
             t["category_name"] = db.CATEGORY_NAMES.get(funds.get(c, {}).get("category", "other"), "其他")
+            if t.get("plan_id") is not None:
+                t["plan_reason"] = plan_reasons.get(t["plan_id"], "")
         return 200, {"items": items}, {}
 
     if path == "/api/txns" and method == "POST":

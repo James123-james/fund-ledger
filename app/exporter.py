@@ -453,14 +453,20 @@ def to_markdown(conn, date_from, date_to, level="standard", template_id=None, ex
     if disc.get("live_expected"):
         L.append(f"**定投纪律性**：{disc['verdict']}")
         L.append("")
-        L.append("| 基金 | 周期 | 应扣 | 实扣 | 达标率 | 状态 |")
-        L.append("| --- | --- | ---: | ---: | ---: | --- |")
+        L.append("| 基金 | 周期 | 应扣 | 实扣 | 达标率 | 状态 | 决策理由 |")
+        L.append("| --- | --- | ---: | ---: | ---: | --- | --- |")
         for r in disc["rows"]:
             L.append(
                 f"| {r['name']} | {r['freq_name']} | {r['expected']} | {r['actual']} | "
                 f"{_ratio(r['rate'])} | "
-                f"{'进行中' if r['enabled'] else '已结束'} |"
+                f"{'进行中' if r['enabled'] else '已结束'} | "
+                f"{_cell(r.get('reason'), '（未填）')} |"
             )
+        L.append("")
+        L.append(
+            "> 定投计划的「决策理由」记在计划层面：为什么开始这笔定投。"
+            "每一期扣款是机械执行，不重复要理由，因此流水表中定投行的理由列是空的。"
+        )
         L.append("")
     else:
         L.append("_没有进行中的定投计划。_")

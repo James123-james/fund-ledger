@@ -277,6 +277,40 @@ def test_sip(conn):
     mdates = [c["date"] for c in rm["created"]]
     check("每月计划按月生成", len(mdates) == 4, f"{len(mdates)} 期: {mdates}")
 
+    # 计划层面的决策理由：新建、更新、清空
+    pid_r = sip.save_plan(conn, None, {
+        "code": "T001", "amount": 50, "fee_rate": 0,
+        "freq": "monthly", "monthday": 20, "start_date": "2026-11-01",
+        "reason": "看好长期，先用小额定投试水",
+    })
+    pr = [x for x in sip.list_plans(conn) if x["id"] == pid_r][0]
+    check("计划理由可保存", pr["reason"] == "看好长期，先用小额定投试水", pr["reason"])
+
+    sip.save_plan(conn, pid_r, {
+        "code": "T001", "amount": 100, "fee_rate": 0,
+        "freq": "monthly", "monthday": 20, "start_date": "2026-11-01",
+        "reason": "加码到 100",
+    })
+    pr = [x for x in sip.list_plans(conn) if x["id"] == pid_r][0]
+    check("计划理由可更新", pr["reason"] == "加码到 100", pr["reason"])
+
+    sip.save_plan(conn, pid_r, {
+        "code": "T001", "amount": 100, "fee_rate": 0,
+        "freq": "monthly", "monthday": 20, "start_date": "2026-11-01",
+    })
+    pr = [x for x in sip.list_plans(conn) if x["id"] == pid_r][0]
+    check("不传理由时置空而非报错", pr["reason"] == "", repr(pr["reason"]))
+
+    # 每期流水不应继承计划理由：定投是机械执行，继承会把理由填写率刷满
+    sip.save_plan(conn, pid_r, {
+        "code": "T001", "amount": 100, "fee_rate": 0,
+        "freq": "daily", "start_date": "2026-10-01",
+        "reason": "按日定投，摊薄成本",
+    })
+    rr = sip.run_plan(conn, pid_r, "2026-10-20")
+    inherited = [c for c in rr["created"] if (c.get("reason") or "").strip()]
+    check("定投流水不继承计划理由", not inherited, f"{len(inherited)} 条继承了")
+
     # 校验：金额必须为正
     try:
         sip.save_plan(conn, None, {"code": "T001", "amount": 0, "freq": "weekly",
@@ -894,6 +928,17 @@ def test_export(tmpdir):
     full = exporter.to_markdown(conn, "2026-09-01", "2026-10-01", "full", None)
     check("精简档也含理由", MARK_REASON in brief)
     check("完整档也含理由", MARK_REASON in full)
+
+    # 7.5) 定投计划的理由也要进导出，否则 AI 复盘时只看到「达标率 100%」
+    sip.save_plan(conn, None, {
+        "code": "E001", "amount": 100, "fee_rate": 0,
+        "freq": "monthly", "monthday": 15, "start_date": "2026-09-01",
+        "reason": "计划理由-用于导出校验",
+    })
+    md3 = exporter.to_markdown(conn, "2026-09-01", "2026-10-01", "standard", None)
+    check("导出含定投计划理由", "计划理由-用于导出校验" in md3)
+    check("定投纪律表有理由列", "| 状态 | 决策理由 |" in md3)
+    check("导出说明定投不逐期填理由", "不重复要理由" in md3)
 
     # 8) 没有理由时应给出提示而不是空白
     conn.execute("UPDATE txns SET reason = '' WHERE code = 'E001'")

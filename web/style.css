@@ -1063,3 +1063,91 @@ td.td-reason.flat { color: var(--ink-3); }
     line-height: 1.55;
   }
 }
+
+/* ---------- 定投计划的决策理由 ----------
+   与「备注」在视觉上区分：理由带左侧色条，备注是灰字。
+   理由多行截断到 3 行，完整内容在 title 里，编辑弹窗可看全文。 */
+.sip-reason {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+  border-radius: 0 8px 8px 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sip-reason-k {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-right: 6px;
+  letter-spacing: .02em;
+}
+.sip-reason.empty-reason {
+  border-left-color: var(--line);
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* 流水表中「来自定投计划」的标记 */
+.from-plan {
+  font-size: 11px;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+textarea#sp-reason {
+  width: 100%; resize: vertical; min-height: 44px;
+  font-family: inherit; font-size: 13px; line-height: 1.6;
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+}
+
+@media (max-width: 720px) {
+  .sip-reason { -webkit-line-clamp: 4; }
+}
+
+/* ---------- 流水表：列宽约束 ----------
+   11 列之后基金列被压缩，长基金名（如「南方恒生科技ETF发起联接(QDII)C」）
+   会换成两行，把整行从 44px 拉到 65px。限宽截断 + title 看全文，
+   与备注、理由两列的处理保持一致。 */
+#txns td.name {
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 决策理由列按内容分配容易只剩 80px，给个下限保证可点可读 */
+#txns td.td-reason { min-width: 110px; }
+/* 操作列按内容收缩，把宽度让给基金列 */
+#txns td:last-child, #txns th:last-child { width: 1%; }
+
+@media (max-width: 1280px) {
+  #txns td.name { max-width: 190px; }
+}
+
+/* ---------- 长文本截断的统一做法 ----------
+   overflow:hidden 加在 table-cell 上不能真正把 scrollWidth 压回单元格宽度，
+   被裁掉的内容仍会计入表格宽度，导致表格出现「看不见内容却能横向拖动」的
+   幽灵滚动条。改用块级包裹后，裁剪发生在块内，表格宽度才回到真实值。 */
+.clip {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+/* 块级包裹后，表格单元格自身不再需要截断属性 */
+/* 单元格本身不再截断，裁剪交给内部的 .clip 块 */
+@media (max-width: 720px) {
+  .clip { white-space: normal; }  /* 手机卡片布局要求全文可见 */
+}

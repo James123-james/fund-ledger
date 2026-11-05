@@ -270,6 +270,9 @@ def save_plan(conn, plan_id, payload):
 
     enabled = 1 if payload.get("enabled", True) else 0
     note = (payload.get("note") or "").strip()[:80]
+    # 决策理由：为什么开始 / 维持这个计划。与单笔买入的理由同性质，
+    # 但作用于整个计划，不写进每一期流水（每期是机械执行，不是新判断）。
+    reason = (payload.get("reason") or "").strip()[:500]
     now = date.today().isoformat()
 
     if plan_id:
@@ -277,15 +280,18 @@ def save_plan(conn, plan_id, payload):
             raise ValueError("计划不存在")
         conn.execute(
             "UPDATE sip_plans SET code=?, amount=?, fee_rate=?, freq=?, weekday=?, "
-            "monthday=?, start_date=?, end_date=?, enabled=?, note=? WHERE id=?",
-            (code, amount, fee_rate, freq, weekday, monthday, start, end, enabled, note, plan_id),
+            "monthday=?, start_date=?, end_date=?, enabled=?, note=?, reason=? WHERE id=?",
+            (code, amount, fee_rate, freq, weekday, monthday, start, end, enabled, note,
+             reason, plan_id),
         )
         pid = plan_id
     else:
         cur = conn.execute(
             "INSERT INTO sip_plans (code, amount, fee_rate, freq, weekday, monthday, "
-            "start_date, end_date, enabled, note, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (code, amount, fee_rate, freq, weekday, monthday, start, end, enabled, note, now),
+            "start_date, end_date, enabled, note, reason, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (code, amount, fee_rate, freq, weekday, monthday, start, end, enabled, note,
+             reason, now),
         )
         pid = cur.lastrowid
     conn.commit()
