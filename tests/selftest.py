@@ -492,6 +492,33 @@ def test_adopt(tmpdir):
     ).fetchone()["c"]
     check("重复归类仍全部绑定", bnd2 == tot, f"{bnd2}/{tot}")
 
+    # 归类是 DELETE + INSERT 重建，必须保留用户填的决策理由
+    # （真实事故：20:58 一次归类把 5 个计划的理由全删了）
+    sip.save_plan(conn, None, {
+        "code": "AD1", "amount": 10, "fee_rate": 0,
+        "freq": "weekly", "weekday": 0, "start_date": "2026-09-21",
+        "reason": "归类不该删掉这条理由",
+    })
+    before_reasons = {
+        r["id"]: r["reason"] for r in conn.execute(
+            "SELECT id, reason FROM sip_plans WHERE code = 'AD1'"
+        ).fetchall() if (r["reason"] or "").strip()
+    }
+    sip.adopt_history(conn, ["AD1"])
+    after_all = [
+        r["reason"] for r in conn.execute(
+            "SELECT reason FROM sip_plans WHERE code = 'AD1'"
+        ).fetchall()
+    ]
+    check("归类后理由仍在", any("归类不该删掉这条理由" in (x or "") for x in after_all),
+          f"归类前 {len(before_reasons)} 条有理由，归类后 {after_all}")
+
+    # 流水默认 note「定投计划」不应变成计划备注（是程序占位值，不是用户的说明）
+    bad_note = conn.execute(
+        "SELECT COUNT(*) c FROM sip_plans WHERE code = 'AD1' AND note = '定投计划'"
+    ).fetchone()["c"]
+    check("归类不写入占位备注", bad_note == 0, f"{bad_note} 个计划的 note 是占位值")
+
     # 归类后补生成不应重复写入
     before = conn.execute("SELECT COUNT(*) c FROM txns WHERE code='AD1'").fetchone()["c"]
     sip.run_all(conn, until="2026-10-26")
