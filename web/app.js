@@ -600,7 +600,11 @@ function renderSipPlans() {
           <div class="sip-meta">${esc(p.freq_name)} · ${money(p.amount)}/期 · 费率 ${p.fee_rate}%${p.holiday_mode === 'skip' ? ' · 遇假期跳过' : ''}</div>
         </div>
         <div class="sip-status">
-          ${p.enabled ? '<span class="pill act-open">启用中</span>' : '<span class="pill">已停用</span>'}
+          ${p.enabled
+            ? '<span class="pill act-open">启用中</span>'
+            : p.needs_confirm
+              ? '<span class="pill needs-confirm" title="只有 1 笔流水，无法判断周期。请点「编辑」确认是每日、每周还是每月">需确认周期</span>'
+              : '<span class="pill">已停用</span>'}
         </div>
       </div>
       <div class="sip-stats">
@@ -2089,7 +2093,11 @@ function bindEvents() {
       });
       const total = prev.plans.reduce((a, b) => a + b.count, 0);
       const msg = `将创建 ${prev.plans.length} 个计划，覆盖 ${total} 笔流水：\n\n`
-        + lines.join('\n') + '\n\n自动备份后执行，继续？';
+        + lines.join('\n')
+        + '\n\n注意：归类会删除并重建这些基金的计划，'
+        + '已填的「决策理由」会保留，但周期会被重新推断。'
+        + '\n只有 1 笔流水的基金推不出周期，会建成「需确认周期」的停用计划。'
+        + '\n\n自动备份后执行，继续？';
       if (!confirm(msg)) return;
       const r = await post('/api/sip-plans/adopt', {});
       toast(`已创建 ${r.created} 个计划，绑定 ${r.bound} 笔流水`);

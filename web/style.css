@@ -1151,3 +1151,12 @@ textarea#sp-reason {
 @media (max-width: 720px) {
   .clip { white-space: normal; }  /* 手机卡片布局要求全文可见 */
 }
+
+/* 需确认周期：单笔流水推不出周期，用琥珀色区分于普通「已停用」 */
+.pill.needs-confirm {
+  background: #FAEEDA;
+  color: #854F0B;
+}
+@media (prefers-color-scheme: dark) {
+  .pill.needs-confirm { background: #412402; color: #FAC775; }
+}

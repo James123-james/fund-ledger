@@ -137,6 +137,10 @@ def list_plans(conn):
             "SELECT COUNT(*) AS c FROM txns WHERE plan_id = ?", (p["id"],)
         ).fetchone()["c"]
         p["next_date"] = _next_date(conn, p)
+        # 归类时若某个片段只有 1 笔流水，周期推不出来，会被建成停用计划。
+        # 这种计划需要人工确认周期，界面上要给出提示，否则用户只看到「已停用」
+        # 却不知道为什么，也不会去改。
+        p["needs_confirm"] = (not p["enabled"]) and p["generated"] == 1
         out.append(p)
     return out
 
@@ -595,11 +599,22 @@ def adopt_history(conn, codes=None, dry_run=False):
                         "holiday_mode": hmode,
                         "start_date": seg_dates[0],
                         "end_date": None if is_last else seg_dates[-1],
-                        "enabled": 1 if is_last else 0,
+                        # 单笔流水推不出周期，split_patterns 会保守地归为 daily。
+                        # 但 daily 是最激进的假设——若直接启用，明天就会按日扣款，
+                        # 把「周三定投」变成事实上的每日定投，且会生成不存在的流水。
+                        # 因此单笔一律建成停用计划，等人工确认周期后再启用。
+                        "enabled": 1 if (is_last and len(seg_dates) > 1) else 0,
+                        "needs_confirm": len(seg_dates) == 1,
                         "last_run": seg_dates[-1],
                         "dates": seg_dates,
                         "count": len(seg_dates),
-                        "note": (recs[0].get("note") or "历史定投归类")[:60],
+                        # 流水的默认 note 是「定投计划」，是程序填的占位值，
+                # 当计划的 note 会变成无意义噪音（卡片上显示「备注：定投计划」）
+                "note": (
+                    ""
+                    if (recs[0].get("note") or "").strip() in ("", "定投计划")
+                    else recs[0]["note"][:60]
+                ),
                     }
                 )
 
@@ -609,13 +624,26 @@ def adopt_history(conn, codes=None, dry_run=False):
     created = 0
     bound = 0
     assigned = []
-    for spec in plan_specs:
+
+    # 重建前先备份「决策理由」。
+    # 归类是 DELETE + INSERT 重建，reason 不在 spec 里，不抢救就会被删掉。
+    # 用户填的理由是唯一的原始判断记录，删了无法恢复。
+    kept_reason = {}
+    by_code_old = {}
+    for r in conn.execute("SELECT * FROM sip_plans").fetchall():
+        plan = dict(r)
+        if (plan["reason"] or "").strip():
+            kept_reason[(plan["code"], plan["freq"], plan["weekday"], plan["monthday"])] = plan["reason"]
+        by_code_old.setdefault(plan["code"], []).append(plan)
+
+    codes_in_specs = {spec["code"] for spec in plan_specs}
+
+    for code in codes_in_specs:
         # 同一基金先清空旧绑定与旧计划，保证可重复执行
         conn.execute(
-            "UPDATE txns SET plan_id = NULL WHERE code = ? AND action = 'sip'",
-            (spec["code"],),
+            "UPDATE txns SET plan_id = NULL WHERE code = ? AND action = 'sip'", (code,)
         )
-        conn.execute("DELETE FROM sip_plans WHERE code = ?", (spec["code"],))
+        conn.execute("DELETE FROM sip_plans WHERE code = ?", (code,))
 
     for spec in plan_specs:
         cur = conn.execute(
@@ -631,6 +659,20 @@ def adopt_history(conn, codes=None, dry_run=False):
         )
         pid = cur.lastrowid
         created += 1
+
+        # 回填决策理由：先按业务键精确匹配，再按「该基金原本只有 1 个计划」兜底。
+        # 兜底是必要的——单笔流水的周期无法判断，重建后 freq 可能变化，
+        # 业务键匹配不上，但用户的理由不该因此丢失。
+        reason = kept_reason.get(
+            (spec["code"], spec["freq"], spec["weekday"], spec["monthday"])
+        )
+        if not reason and len(by_code_old.get(spec["code"], [])) == 1:
+            only = by_code_old[spec["code"]][0]
+            reason = only.get("reason") if (only.get("reason") or "").strip() else None
+        if reason:
+            conn.execute("UPDATE sip_plans SET reason = ? WHERE id = ?", (reason, pid))
+            spec["reason"] = reason
+
         n = 0
         for ds in spec["dates"]:
             r = conn.execute(
