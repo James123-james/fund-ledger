@@ -869,7 +869,7 @@ function renderFundTxns(d) {
     <div class="table-wrap"><table class="responsive">
       <thead><tr>
         <th>日期</th><th>操作</th><th class="num">金额</th><th class="num">份额</th>
-        <th class="num">成交净值</th><th class="num">净值分位</th><th>备注</th>
+        <th class="num">成交净值</th><th class="num">净值分位</th><th>备注</th><th>决策理由</th>
       </tr></thead>
       <tbody>${list.map((m) => `
         <tr>
@@ -881,7 +881,8 @@ function renderFundTxns(d) {
           <td class="num" data-label="净值分位">${m.percentile === null || m.percentile === undefined
             ? '<span class="flat">—</span>'
             : `<span class="${m.percentile > 70 ? 'up' : m.percentile < 30 ? 'down' : 'flat'}">${m.percentile}%</span>`}</td>
-          <td class="muted" data-label="备注" style="font-size:12px">${esc(m.note)}</td>
+          <td class="muted td-note" data-label="备注" style="font-size:12px" title="${esc(m.note || '')}">${esc(m.note)}</td>
+          <td class="td-reason ${m.reason ? '' : 'flat'}" data-label="决策理由" title="${esc(m.reason || '')}">${m.reason ? esc(m.reason) : '—'}</td>
         </tr>`).join('')}</tbody>
     </table></div>`;
 }
@@ -1438,6 +1439,7 @@ function renderTxns() {
       <td class="num ${cls(t.day_pct)}" data-label="当日涨跌">${pct(t.day_pct)}</td>
       <td class="num hide-m" data-label="手续费">${money(t.fee)}</td>
       <td data-label="备注" class="muted td-note" style="font-size:12px" title="${esc(t.note || '')}">${esc(t.note || '')}</td>
+      <td data-label="决策理由" class="td-reason ${t.reason ? '' : 'flat'}" title="${esc(t.reason || '')}">${t.reason ? esc(t.reason) : '—'}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="icon-btn" style="font-size:13px;padding:3px 6px" data-edit="${t.id}" title="编辑">改</button>
         <button class="icon-btn" style="font-size:13px;padding:3px 6px" data-del="${t.id}" title="删除">删</button>
@@ -1449,7 +1451,8 @@ function renderTxns() {
       <table class="responsive">
         <thead><tr>
           <th>日期</th><th>基金</th><th>操作</th><th class="num">金额</th><th class="num">份额</th>
-          <th class="num">成交净值</th><th class="num">当日涨跌</th><th class="num">手续费</th><th>备注</th><th></th>
+          <th class="num">成交净值</th><th class="num">当日涨跌</th><th class="num">手续费</th>
+          <th>备注</th><th>决策理由</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>

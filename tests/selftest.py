@@ -17,7 +17,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
-from app import analytics, backup, behavior, db, dividend, engine, sip  # noqa: E402
+from app import analytics, backup, behavior, db, dividend, engine, exporter, sip  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -790,6 +790,119 @@ def test_behavior(conn):
         check("非法月份应报错", True)
 
 
+# ---------------------------------------------------------------- 导出完整性
+
+# 私有标记：确认「用户手写的内容」确实进了导出文件，而不只是字段名存在
+MARK_PIPE = "含|竖线"
+MARK_NL = "第一行\n第二行"
+MARK_REASON = "因为看好创新药，计划跌破均线止损"
+
+
+def test_export(tmpdir):
+    print("\n== 导出完整性 ==")
+    import csv as _csv
+    import io as _io
+    import json as _json
+    import os as _os
+
+    p = _os.path.join(tmpdir, "exp.db")
+    conn = db.init(p)
+    conn.execute(
+        "INSERT INTO funds (code,name,category,is_money,created_at) "
+        "VALUES ('E001','导出测试基金','stock',0,datetime('now'))"
+    )
+    # 造一段净值，保证收益质量等章节有数据
+    d = date(2026, 9, 1)
+    while d <= date(2026, 9, 30):
+        if d.weekday() < 5:
+            conn.execute(
+                "INSERT INTO nav (code,date,nav,acc_nav,pct) VALUES ('E001',?,1.0,1.0,0)",
+                (d.isoformat(),),
+            )
+        d += timedelta(days=1)
+    conn.execute(
+        "INSERT INTO txns (code,date,action,amount,shares,nav,fee,note,reason,created_at) "
+        "VALUES ('E001','2026-09-01','open',1000,1000,1.0,0,? ,?,datetime('now'))",
+        (MARK_PIPE + "\n备注第二行", MARK_REASON + "\n" + MARK_NL),
+    )
+    conn.commit()
+
+    md = exporter.to_markdown(conn, "2026-09-01", "2026-10-01", "standard", None)
+    cs = exporter.to_csv(conn, "2026-09-01", "2026-10-01")
+    js = exporter.to_json(conn, "2026-09-01", "2026-10-01", "standard", None)
+
+    # 1) 三种格式都必须含决策理由正文
+    check("MD 含决策理由正文", MARK_REASON in md)
+    check("CSV 含决策理由正文", MARK_REASON in cs)
+    check("JSON 含决策理由正文", MARK_REASON in js)
+    check("MD 含备注正文", "备注第二行" in md)
+    check("CSV 含备注正文", "备注第二行" in cs)
+
+    # 2) 表头必须有这一列，否则列错位
+    check("MD 有决策理由列", "| 备注 | 决策理由 |" in md)
+    check("CSV 有决策理由列", "备注,决策理由" in cs)
+
+    # 3) 竖线与换行必须被处理，不能把表格结构拆坏
+    # 注意只取「操作流水」那一行：持仓表也含 E001 但没有理由列，
+    # 拿错行会让断言看起来通过而实际没测到东西。
+    flow = [l for l in md.splitlines()
+            if l.startswith("|") and "E001" in l and "建仓" in l]
+    check("MD 流水行存在", bool(flow), f"{len(flow)} 行")
+    if flow:
+        row = flow[0]
+        cells = row.strip().strip("|").split("|")
+        check("MD 流水行列数一致", len(cells) == 12, f"{len(cells)} 列（应为 12）")
+        check("MD 竖线被替换为全角", "｜" in row, "原始竖线未转义会列错位")
+        check("MD 未残留裸竖线", "含|竖线" not in row)
+        check("MD 换行被压成空格", "\n" not in row)
+        check("MD 理由未被截断", MARK_REASON in row)
+
+    # 4) 按表格块校验每一张表的列数自洽
+    blocks, buf = [], []
+    for l in md.splitlines():
+        if l.startswith("|"):
+            buf.append(l)
+        else:
+            if buf:
+                blocks.append(buf)
+                buf = []
+    if buf:
+        blocks.append(buf)
+    ragged = []
+    for blk in blocks:
+        widths = {l.count("|") for l in blk if not set(l) <= set("| -:")}
+        if len(widths) > 1:
+            ragged.append(blk[0][:40])
+    check("所有表格列数自洽", not ragged, str(ragged[:2]))
+
+    # 5) CSV 必须能被标准解析器读成固定列
+    rows = list(_csv.reader(_io.StringIO(cs.lstrip("\ufeff"))))
+    check("CSV 表头列数正确", len(rows[0]) == 13, f"{len(rows[0])} 列")
+    body = [r for r in rows[1:] if r and r[0] == "2026-09-01"]
+    check("CSV 数据列数与表头一致", bool(body) and len(body[0]) == len(rows[0]),
+          f"{len(body[0]) if body else 0} vs {len(rows[0])}")
+
+    # 6) JSON 字段完整
+    payload = _json.loads(js)
+    t0 = payload["transactions"][0]
+    check("JSON 有 reason 字段", "reason" in t0)
+    check("JSON 有 note 字段", "note" in t0)
+    check("JSON reason 内容完整", MARK_REASON in t0["reason"])
+
+    # 7) 档位切换不应丢理由
+    brief = exporter.to_markdown(conn, "2026-09-01", "2026-10-01", "brief", None)
+    full = exporter.to_markdown(conn, "2026-09-01", "2026-10-01", "full", None)
+    check("精简档也含理由", MARK_REASON in brief)
+    check("完整档也含理由", MARK_REASON in full)
+
+    # 8) 没有理由时应给出提示而不是空白
+    conn.execute("UPDATE txns SET reason = '' WHERE code = 'E001'")
+    conn.commit()
+    md2 = exporter.to_markdown(conn, "2026-09-01", "2026-10-01", "standard", None)
+    check("无理由时提示填写", "没有填写记录" in md2, "")
+    conn.close()
+
+
 # ---------------------------------------------------------------- 主流程
 
 
@@ -809,6 +922,7 @@ def main():
             test_backup(tmp)
             test_adopt(tmp)
             test_behavior(conn)
+            test_export(tmp)
         finally:
             conn.close()
 

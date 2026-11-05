@@ -7,7 +7,10 @@ data/
 *.db
 *.db-wal
 *.db-shm
-# 自动备份目录（在 data/ 下，这里再声明一次以防 data/ 规则被改动）
+# 自动备份目录：用任意 --data 目录启动时都可能生成，
+# 不能只写 data/backups/，否则 python server.py --data demo 产生的
+# demo/backups/ 会漏进仓库
+backups/
 data/backups/
 
 # 但演示数据要保留，别人克隆后能直接用 --data demo 看效果

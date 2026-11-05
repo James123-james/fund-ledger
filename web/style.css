@@ -1034,3 +1034,32 @@ textarea#f-reason {
   .txn-more .spacer { display: none; }
   .txn-more .btn { flex: 1 1 auto; }
 }
+
+/* ---------- 决策理由列 ----------
+   理由可能上百字，表格里按固定宽度截断，完整内容在 title 里，
+   编辑弹窗可看全文。手机上放开换行，因为卡片本来就纵向铺开。 */
+td.td-reason {
+  max-width: 240px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#txns td.td-reason { max-width: 210px; }
+td.td-reason.flat { color: var(--ink-3); }
+
+@media (max-width: 1280px) {
+  #txns td.td-note { max-width: 110px; }
+  #txns td.td-reason { max-width: 170px; }
+}
+
+@media (max-width: 720px) {
+  /* 卡片布局下不再截断：一行放不下就换行，理由本身就是要读的内容 */
+  td.td-reason {
+    max-width: none;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.55;
+  }
+}
