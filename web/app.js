@@ -1978,12 +1978,31 @@ function updateTplTotal() {
    导出
    ============================================================ */
 
+const LAST_EXPORT_KEY = 'fl.export.lastEnd';
+
+function lastExportEnd() {
+  try { return localStorage.getItem(LAST_EXPORT_KEY) || ''; } catch { return ''; }
+}
+
+function renderExportShortcut() {
+  const btn = $('#btn-continue-export');
+  if (!btn) return;
+  const last = lastExportEnd();
+  if (!last) { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.dataset.date = last;
+  const label = $('#last-export-date');
+  if (label) label.textContent = last;
+  btn.title = `上次导出结束于 ${last}，点击把它设为开始日期`;
+}
+
 function prepareExport() {
   if (!$('#exp-from').value) {
     const { from, to } = shiftRange('all');
     $('#exp-from').value = from;
     $('#exp-to').value = to;
   }
+  renderExportShortcut();
 }
 
 function exportParams() {
@@ -2018,6 +2037,8 @@ async function doExport() {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+    try { localStorage.setItem(LAST_EXPORT_KEY, exportParams().get('to')); } catch { /* 隐私模式忽略 */ }
+    renderExportShortcut();
     toast('已下载 ' + name);
   } catch (e) {
     toast(e.message, true);
@@ -2455,6 +2476,21 @@ function bindEvents() {
   });
   $('#btn-export').addEventListener('click', doExport);
   $('#btn-preview').addEventListener('click', doPreview);
+  const clearQuickRange = () => {
+    $$('#quick-range button').forEach((x) => x.classList.remove('active'));
+  };
+  $('#btn-continue-export').addEventListener('click', () => {
+    const last = $('#btn-continue-export').dataset.date || lastExportEnd();
+    if (!last) return;
+    const today = isoDate(new Date());
+    clearQuickRange();
+    $('#exp-from').value = last;
+    $('#exp-to').value = today < last ? last : today;
+    toast('开始日期已设为 ' + last);
+  });
+  ['#exp-from', '#exp-to'].forEach((sel) => {
+    $(sel).addEventListener('change', clearQuickRange);
+  });
   $('#btn-copy').addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText($('#preview-body').textContent);
