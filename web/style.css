@@ -1449,3 +1449,16 @@ textarea#sp-reason {
   gap: 9px; flex-wrap: wrap;
   margin-bottom: 14px;
 }
+
+/* ---------- 收益走势：口径切换 ---------- */
+.chart-head-tools {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 6px; flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .panel-head { flex-wrap: wrap; }
+  .chart-head-tools { width: 100%; justify-content: space-between; }
+  #chart-mode button { padding: 5px 10px; }
+  #chart-range button { padding: 5px 9px; }
+}
