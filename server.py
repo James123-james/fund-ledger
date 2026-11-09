@@ -28,11 +28,20 @@ if BASE_DIR not in sys.path:
 
 from app import analytics, backup, behavior, db, dividend, engine, exporter, quotes, sip  # noqa: E402
 
+# 手机端 PWA 需要的类型；不注册的话 .webmanifest 会以 application/octet-stream 发出去
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("image/svg+xml", ".svg")
+mimetypes.add_type("image/png", ".png")
+
 WEB_DIR = os.path.join(BASE_DIR, "web")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "fund.db")
 
 OPEN_BROWSER = True
+
+# 单次请求体上限。导入账本要把整个 .db 用 base64 传上来，留够余量。
+MAX_BODY = 48 * 1024 * 1024
+IMPORT_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------- 工具
@@ -516,7 +525,91 @@ def handle_api(method, path, query, body, conn):
             "Content-Disposition": f"attachment; filename={name}",
         }
 
+    # ---- 从电脑导入账本（手机版）
+    if path == "/api/import" and method == "POST":
+        return 200, import_database(conn, body), {}
+
     raise ApiError("接口不存在", 404)
+
+
+def import_database(conn, body):
+    """用上传的 SQLite 文件替换当前账本。
+
+    顺序很重要：先落临时文件、校验完整性和表结构，再备份现有库，
+    最后才原子替换。任何一步失败都不会动到正在用的 fund.db。
+    """
+    import base64
+    import sqlite3
+    import tempfile
+
+    raw_b64 = str(body.get("data") or "")
+    if not raw_b64:
+        raise ApiError("没有收到数据库文件")
+    try:
+        raw = base64.b64decode(raw_b64, validate=True)
+    except (ValueError, TypeError):
+        raise ApiError("文件内容无法解码，请重新选择")
+    if len(raw) < 4096:
+        raise ApiError("文件太小，不像是账本数据库")
+    if len(raw) > 40 * 1024 * 1024:
+        raise ApiError("文件超过 40 MB，导入中止")
+    if not raw.startswith(b"SQLite format 3\x00"):
+        raise ApiError("这不是 SQLite 数据库文件（别选 -wal 或说明文件）")
+
+    with IMPORT_LOCK:
+        fd, tmp = tempfile.mkstemp(prefix=".import-", suffix=".db", dir=DATA_DIR)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(raw)
+
+            test = sqlite3.connect(tmp)
+            try:
+                check = test.execute("PRAGMA integrity_check").fetchone()[0]
+                if check != "ok":
+                    raise ApiError(f"数据库校验没通过：{check}")
+                tables = {
+                    r[0] for r in test.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                missing = sorted({"funds", "txns", "nav"} - tables)
+                if missing:
+                    raise ApiError(
+                        "这个库缺少基金台账的表（" + "、".join(missing) + "），可能选错了文件"
+                    )
+                funds = test.execute("SELECT COUNT(*) FROM funds").fetchone()[0]
+                txns = test.execute("SELECT COUNT(*) FROM txns").fetchone()[0]
+            finally:
+                test.close()
+
+            bk_name, bk_info = backup.make(DB_PATH, tag="before-import")
+            if bk_name is None:
+                raise ApiError(f"导入前备份失败，已中止：{bk_info}")
+
+            # 关掉本请求的连接，避免替换后被旧句柄继续读写
+            conn.close()
+            os.replace(tmp, DB_PATH)
+            tmp = None
+            for suffix in ("-wal", "-shm"):
+                side = DB_PATH + suffix
+                if os.path.exists(side):
+                    os.remove(side)
+
+            migrated = db.init(DB_PATH)   # 旧版本账本自动补列
+            migrated.close()
+            return {
+                "ok": True,
+                "funds": funds,
+                "txns": txns,
+                "backup": bk_name,
+                "filename": os.path.basename(str(body.get("filename") or "fund.db"))[:80],
+            }
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
 
 def list_funds(conn):
@@ -754,7 +847,10 @@ class Handler(BaseHTTPRequestHandler):
         body = {}
         if method in ("POST", "PUT", "PATCH"):
             length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length else b""
+            if length > MAX_BODY:
+                self.close_connection = True
+                return self._send_json(413, {"error": "请求体超过 48 MB，导入中止"})
+            raw = self.rfile.read(length) if length > 0 else b""
             if raw:
                 try:
                     body = json.loads(raw.decode("utf-8"))

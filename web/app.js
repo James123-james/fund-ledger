@@ -15,6 +15,7 @@ const state = {
   alloc: null,
   curTpl: null,
   chartRange: '1y',
+  chartPoints: [],
   txnFilter: { from: '', to: '', code: '' },
   txnShown: 40,   // 流水默认展示条数，超出部分按需展开
   sipPlans: [],
@@ -106,6 +107,96 @@ $$('.modal-mask').forEach((mask) => {
   mask.addEventListener('click', (e) => {
     if (e.target === mask || e.target.closest('[data-close]')) mask.hidden = true;
   });
+});
+
+/* ---------------- 装到桌面（PWA） ---------------- */
+
+let installPrompt = null;
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    window.navigator.standalone === true;
+}
+
+function rememberInstallDismissed() {
+  try { localStorage.setItem('fl.install.dismissed', '1'); } catch { /* 隐私模式忽略 */ }
+}
+
+function installStepsHTML() {
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  if (isIOS) {
+    return [
+      ['用 Safari 打开这个页面（iPhone 只认 Safari）', ''],
+      ['点底部中间的「分享」按钮', '方框带向上箭头的图标'],
+      ['往下滑，点「添加到主屏幕」，再点「添加」', ''],
+    ];
+  }
+  const browser = /(baidubrowser|baiduboxapp|baidubrowserlite)/i.test(ua) ? '百度浏览器'
+    : /(qqbrowser|mttbrowser)/i.test(ua) ? 'QQ 浏览器'
+    : /(edge)/i.test(ua) ? 'Edge'
+    : 'Chrome / 系统浏览器';
+  return [
+    [`点 ${browser} 右上角或右下角的菜单`, '「⋮」「≡」或「更多」'],
+    ['找「添加到主屏幕」或「安装应用」', '不同浏览器叫法略有差别'],
+    ['确认添加', '桌面上会出现「基金台账」图标'],
+  ];
+}
+
+function openInstallHelp() {
+  const html = installStepsHTML().map(([title, sub], i) => `
+    <div class="is-row">
+      <span class="is-num">${i + 1}</span>
+      <div>${title}${sub ? `<br><span class="flat">${sub}</span>` : ''}</div>
+    </div>`).join('');
+  $('#install-steps').innerHTML = html;
+  $('#btn-install-go').hidden = !installPrompt;
+  openModal('#modal-install');
+}
+
+async function doInstall() {
+  if (!installPrompt) { openInstallHelp(); return; }
+  const prompt = installPrompt;
+  installPrompt = null;
+  try {
+    await prompt.prompt();
+    const choice = await prompt.userChoice;
+    if (choice && choice.outcome === 'accepted') {
+      $('#install-hint').hidden = true;
+      rememberInstallDismissed();
+      toast('已装到桌面');
+    }
+  } catch { openInstallHelp(); }
+}
+
+function initInstallUI() {
+  const hint = $('#install-hint');
+  if (!hint) return;
+  let dismissed = false;
+  try { dismissed = localStorage.getItem('fl.install.dismissed') === '1'; } catch { /* 忽略 */ }
+  const canShow = window.matchMedia('(max-width: 720px)').matches && !isStandalone() && !dismissed;
+  if (!canShow) return;
+  hint.hidden = false;
+  $('#btn-install').addEventListener('click', doInstall);
+  $('#btn-install-go').addEventListener('click', doInstall);
+  $('#btn-install-close').addEventListener('click', () => {
+    hint.hidden = true;
+    rememberInstallDismissed();
+  });
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  const go = $('#btn-install-go');
+  if (go) go.hidden = false;
+});
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  const hint = $('#install-hint');
+  if (hint) hint.hidden = true;
+  rememberInstallDismissed();
 });
 
 /* ---------------- 视图切换 ---------------- */
@@ -787,11 +878,16 @@ function renderFundChart(d) {
   const markers = d.markers;
   const box = $('#fund-chart');
   if (!navs.length) {
+    box.classList.add('is-empty');
     box.innerHTML = '<div class="empty">没有净值数据</div>';
     return;
   }
+  box.classList.remove('is-empty');
 
-  const W = 760, H = 260, P = { t: 16, r: 14, b: 26, l: 56 };
+  const compact = window.matchMedia('(max-width: 720px)').matches;
+  const W = Math.max(240, Math.round(box.clientWidth || (compact ? 340 : 760)));
+  const H = Math.max(200, Math.round(box.clientHeight || (compact ? 210 : 260)));
+  const P = { t: 16, r: compact ? 8 : 14, b: 26, l: compact ? 44 : 56 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
 
   let lo = Math.min(...navs.map((x) => x.nav));
@@ -866,6 +962,17 @@ function renderFundChart(d) {
     <span><i style="background:var(--up);height:8px;width:8px;border-radius:50%"></i>买入</span>
     <span><i style="background:var(--down);height:8px;width:8px;border-radius:50%"></i>卖出</span>
     <span style="margin-left:auto">${up ? '区间上涨' : '区间下跌'} ${pct((lastNav / firstNav - 1) * 100)}</span>`;
+
+  // 手机上点买卖点，直接显示那一笔的日期、动作和金额
+  const svg = $('#fund-svg');
+  if (svg) {
+    svg.addEventListener('click', (ev) => {
+      const g = ev.target.closest && ev.target.closest('.marker');
+      if (!g) return;
+      const t = g.querySelector('title');
+      if (t) toast(t.textContent.trim());
+    });
+  }
 }
 
 function renderFundTxns(d) {
@@ -1027,6 +1134,45 @@ async function loadBackupInfo() {
       </div>`;
   } catch (e) {
     box.innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`;
+  }
+}
+
+/* ---------------- 从电脑导入账本 ---------------- */
+
+function readFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const s = String(reader.result || '');
+      const comma = s.indexOf(',');
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function importDatabase(file) {
+  if (!file) return;
+  if (file.size > 40 * 1024 * 1024) {
+    toast('文件超过 40 MB，先确认是不是基金台账的 fund.db', true);
+    return;
+  }
+  const ok = confirm(
+    `导入「${file.name}」会用这份账本覆盖手机上的当前数据。\n\n` +
+    '导入前会自动备份手机现有账本，确定继续？'
+  );
+  if (!ok) return;
+  try {
+    loading(true);
+    const data = await readFileBase64(file);
+    const r = await post('/api/import', { filename: file.name, data });
+    toast(`已导入 ${r.funds} 只基金、${r.txns} 笔流水，正在重新加载`);
+    setTimeout(() => location.reload(), 900);
+  } catch (e) {
+    toast(e.message || '导入失败', true);
+  } finally {
+    loading(false);
   }
 }
 
@@ -1292,13 +1438,20 @@ function bindFundLinks(root) {
 function renderChart(points) {
   const box = $('#chart');
   const legend = $('#chart-legend');
+  state.chartPoints = points;
   if (!points.length) {
-    box.innerHTML = '<div class="empty" style="padding:60px 0">暂无净值数据，点右上角「更新净值」</div>';
+    box.classList.add('is-empty');
+    box.innerHTML = '<div class="empty">暂无净值数据，点右上角「更新净值」</div>';
     legend.innerHTML = '';
     return;
   }
+  box.classList.remove('is-empty');
 
-  const W = 760, H = 250, P = { t: 14, r: 12, b: 24, l: 58 };
+  // 按容器实际像素画，viewBox 与显示尺寸一致，手机上的坐标文字才不会被横向压扁
+  const compact = window.matchMedia('(max-width: 720px)').matches;
+  const W = Math.max(240, Math.round(box.clientWidth || (compact ? 340 : 760)));
+  const H = Math.max(190, Math.round(box.clientHeight || (compact ? 210 : 250)));
+  const P = { t: 14, r: compact ? 8 : 12, b: 24, l: compact ? 44 : 58 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
 
   const vals = points.flatMap((p) => [p.value, p.cost]);
@@ -1324,7 +1477,7 @@ function renderChart(points) {
     grid += `<text x="${P.l - 8}" y="${(yy + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">${label}</text>`;
   }
 
-  const xCount = Math.min(5, points.length);
+  const xCount = Math.min(compact ? 4 : 5, points.length);
   let xLabels = '';
   for (let i = 0; i < xCount; i++) {
     const idx = Math.round((i / Math.max(1, xCount - 1)) * (points.length - 1));
@@ -1359,13 +1512,17 @@ function renderChart(points) {
     <span><i style="background:var(--ink-3)"></i>持仓成本</span>
     <span style="margin-left:auto">区间 ${points[0].date} → ${last.date}</span>`;
 
-  // 悬停查看
+  // 悬停 / 手指按住查看
   const svg = $('#chart-svg');
   const tip = $('#chart-tip');
   const cross = $('#crosshair');
-  svg.addEventListener('mousemove', (ev) => {
+  let touching = false;
+  let hideTimer;
+
+  const showAt = (clientX) => {
     const rect = svg.getBoundingClientRect();
-    const rel = ((ev.clientX - rect.left) / rect.width) * W;
+    if (!rect.width) return;
+    const rel = ((clientX - rect.left) / rect.width) * W;
     const ratio = Math.max(0, Math.min(1, (rel - P.l) / iw));
     const idx = Math.round(ratio * (points.length - 1));
     const p = points[idx];
@@ -1373,17 +1530,39 @@ function renderChart(points) {
     cross.setAttribute('x1', x(idx));
     cross.setAttribute('x2', x(idx));
     cross.setAttribute('opacity', '.6');
-    tip.style.opacity = '1';
-    const leftPct = (x(idx) / W) * 100;
-    tip.style.left = Math.min(Math.max(leftPct, 8), 78) + '%';
-    tip.style.top = '8px';
     tip.innerHTML = `<b>${p.date}</b><br>市值 ${money(p.value)}<br>成本 ${money(p.cost)}<br>
       <span style="color:${p.pnl >= 0 ? 'var(--up)' : 'var(--down)'}">当日 ${money(p.pnl, true)}</span>`;
-  });
-  svg.addEventListener('mouseleave', () => {
+    const tipW = tip.offsetWidth || 150;
+    tip.style.left = Math.min(Math.max(x(idx) - tipW / 2, 4), Math.max(4, W - tipW - 4)) + 'px';
+    tip.style.top = '8px';
+    tip.style.opacity = '1';
+  };
+  const hide = () => {
     cross.setAttribute('opacity', '0');
     tip.style.opacity = '0';
+  };
+
+  svg.addEventListener('pointerdown', (ev) => {
+    touching = true;
+    clearTimeout(hideTimer);
+    showAt(ev.clientX);
   });
+  svg.addEventListener('pointermove', (ev) => {
+    if (ev.pointerType === 'mouse' || touching || ev.buttons) showAt(ev.clientX);
+  });
+  svg.addEventListener('pointerup', () => {
+    touching = false;
+    // 手指抬起后留一会儿，方便看清最后按到的数字
+    hideTimer = setTimeout(hide, 2400);
+  });
+  svg.addEventListener('pointercancel', () => { touching = false; hide(); });
+  svg.addEventListener('pointerleave', (ev) => {
+    if (ev.pointerType === 'mouse') { touching = false; hide(); }
+  });
+  if (!window.PointerEvent) {
+    svg.addEventListener('mousemove', (ev) => showAt(ev.clientX));  // 老浏览器兜底
+  }
+  svg.addEventListener('mouseleave', () => { if (!touching) hide(); });
 }
 
 $$('#chart-range button').forEach((b) => {
@@ -1393,6 +1572,17 @@ $$('#chart-range button').forEach((b) => {
     state.chartRange = b.dataset.range;
     loadOverview();
   });
+});
+
+// 手机横竖屏切换、分屏拖动时重画，避免 SVG 被二次拉伸
+let chartResizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(chartResizeTimer);
+  chartResizeTimer = setTimeout(() => {
+    const pts = state.chartPoints || (state.overview && state.overview.series && state.overview.series.points);
+    if (pts && pts.length && $('#view-overview').classList.contains('active')) renderChart(pts);
+    if (state.fundDetail && $('#view-fund').classList.contains('active')) renderFundChart(state.fundDetail);
+  }, 180);
 });
 
 /* ============================================================
@@ -1448,7 +1638,7 @@ function renderTxns() {
       <td class="num hide-m" data-label="成交净值">${num(t.nav, 4)}</td>
       <td class="num ${cls(t.day_pct)}" data-label="当日涨跌">${pct(t.day_pct)}</td>
       <td class="num hide-m" data-label="手续费">${money(t.fee)}</td>
-      <td data-label="备注" class="muted td-note" style="font-size:12px" title="${esc(t.note || '')}"><span class="clip">${esc(t.note || '')}</span></td>
+      <td data-label="备注" class="muted td-note ${t.note ? '' : 'flat'}" style="font-size:12px" title="${esc(t.note || '')}"><span class="clip">${esc(t.note || '')}</span></td>
       <td data-label="决策理由" class="td-reason ${t.reason || t.plan_id ? '' : 'flat'}"
           title="${esc(t.reason || t.plan_reason || (t.plan_id ? '由定投计划自动生成，理由记在计划上' : ''))}">${
         t.reason
@@ -1934,6 +2124,7 @@ function bindEvents() {
   // 顶栏
   $('#btn-new-txn').addEventListener('click', () => openTxnModal(null));
   $('#btn-new-txn2').addEventListener('click', () => openTxnModal(null));
+  $('#fab-new-txn').addEventListener('click', () => openTxnModal(null));
   $('#btn-sync').addEventListener('click', async () => {
     if (!state.funds.length) { toast('基金库是空的，先添加基金', true); return; }
     try {
@@ -2039,6 +2230,14 @@ function bindEvents() {
       toast(`已生成 ${r.name}（${(r.size / 1024).toFixed(0)} KB）`);
       await loadBackupInfo();
     } catch (e) { toast(e.message, true); } finally { loading(false); }
+  });
+
+  // 从电脑导入账本
+  $('#btn-import-db').addEventListener('click', () => $('#db-file').click());
+  $('#db-file').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';   // 允许连续选同一个文件
+    importDatabase(file);
   });
 
   // 定投计划
@@ -2222,6 +2421,14 @@ function bindEvents() {
    启动
    ============================================================ */
 
+// 桌面图标的快捷方式：长按图标 →「记一笔」会带 ?new=1 打开
+function maybeOpenNewTxn() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('new')) return;
+  history.replaceState(null, '', location.pathname);
+  setTimeout(() => openTxnModal(null), 280);
+}
+
 async function boot() {
   try {
     loading(true);
@@ -2237,12 +2444,30 @@ async function boot() {
     prepareExport();
     bindEvents();
     autoRunSipPlans();
+    maybeOpenNewTxn();
   } catch (e) {
-    document.body.insertAdjacentHTML('afterbegin',
-      `<div style="padding:16px;background:#c0392b;color:#fff;font-size:13px">启动失败：${esc(e.message)}</div>`);
+    if (e instanceof TypeError) {
+      // fetch 直接失败：本地服务没起来（常见于从桌面图标打开、后台进程被系统回收）
+      $('#boot-error').hidden = false;
+    } else {
+      document.body.insertAdjacentHTML('afterbegin',
+        `<div style="padding:16px;background:#c0392b;color:#fff;font-size:13px">启动失败：${esc(e.message)}</div>`);
+    }
   } finally {
     loading(false);
   }
+}
+
+$('#btn-boot-retry').addEventListener('click', () => location.reload());
+
+initInstallUI();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {
+      /* 离线缓存不可用不影响在线使用 */
+    });
+  });
 }
 
 boot();

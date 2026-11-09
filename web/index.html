@@ -3,9 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#f5f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101312" media="(prefers-color-scheme: dark)">
+<meta name="description" content="个人基金台账：记录买卖、算清成本与盈亏，手机本地可用。">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#f5f4ef">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="基金台账">
+<meta name="format-detection" content="telephone=no">
 <title>基金台账</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/web/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/web/icon-180.png">
 <link rel="stylesheet" href="/web/style.css">
 </head>
 <body>
@@ -20,6 +29,12 @@
     <button class="btn primary sm" id="btn-new-txn">+ 记一笔</button>
   </div>
 </header>
+
+<div class="install-hint" id="install-hint" hidden>
+  <div class="ih-copy"><b>装到桌面</b><span>通勤时点图标直接打开，不用再输网址</span></div>
+  <button class="btn primary sm" id="btn-install">安装</button>
+  <button class="icon-btn" id="btn-install-close" aria-label="暂不安装">×</button>
+</div>
 
 <nav class="tabs" id="tabs">
   <button class="tab active" data-view="overview">总览</button>
@@ -331,7 +346,13 @@
       <div class="actions">
         <button class="btn ghost sm" id="btn-backup-now">立即备份一份</button>
         <a class="btn ghost sm" href="/api/backup">下载数据库文件</a>
+        <button class="btn ghost sm" id="btn-import-db">从电脑导入账本</button>
+        <input type="file" id="db-file" accept=".db,.sqlite,.sqlite3,application/octet-stream" hidden>
       </div>
+      <p class="field-hint" style="margin-top:8px">
+        换手机或在电脑上记过账？把电脑里的 <code>data/fund.db</code> 传到手机，点「从电脑导入账本」选它即可。
+        导入前会自动备份手机上现有的账本。
+      </p>
       <div id="backup-info" style="margin-top:14px"></div>
       <p class="muted" style="margin-top:12px;font-size:12px">
         如需彻底重置：先关闭程序，再删除 <code>data/fund.db</code>，重新启动即恢复初始状态。
@@ -350,14 +371,37 @@
 </main>
 
 <!-- 底部导航（手机） -->
-<nav class="bottom-nav" id="bottom-nav">
-  <button class="bn active" data-view="overview"><span>总览</span></button>
-  <button class="bn" data-view="txns"><span>流水</span></button>
-  <button class="bn" data-view="sip"><span>定投</span></button>
-  <button class="bn" data-view="analysis"><span>配置</span></button>
-  <button class="bn" data-view="export"><span>导出</span></button>
-  <button class="bn" data-view="settings"><span>设置</span></button>
+<nav class="bottom-nav" id="bottom-nav" aria-label="主导航">
+  <button class="bn active" data-view="overview" aria-label="总览">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+    <span>总览</span>
+  </button>
+  <button class="bn" data-view="txns" aria-label="操作流水">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>
+    <span>流水</span>
+  </button>
+  <button class="bn" data-view="sip" aria-label="定投计划">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+    <span>定投</span>
+  </button>
+  <button class="bn" data-view="analysis" aria-label="配置分析">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    <span>配置</span>
+  </button>
+  <button class="bn" data-view="export" aria-label="导出">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/></svg>
+    <span>导出</span>
+  </button>
+  <button class="bn" data-view="settings" aria-label="设置">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg>
+    <span>设置</span>
+  </button>
 </nav>
+
+<button class="fab" id="fab-new-txn" aria-label="记一笔">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+</button>
+
 
 <!-- 操作录入弹窗 -->
 <div class="modal-mask" id="modal-txn" hidden>
@@ -591,6 +635,39 @@
 
 <div class="toast" id="toast"></div>
 <div class="loading" id="loading" hidden><div class="spinner"></div></div>
+
+<!-- 首次打开：本地服务未启动 -->
+<div class="boot-error" id="boot-error" hidden>
+  <div class="be-card">
+    <div class="be-mark">¥</div>
+    <h2>账本还没启动</h2>
+    <p>这个账本跑在你手机本机，数据不经过任何服务器。<br>打开 DSH Go 让助手启动后再回来，或点下面的重试。</p>
+    <div class="be-actions">
+      <button class="btn primary" id="btn-boot-retry">重试</button>
+      <a class="btn ghost" href="dshgo://open/engine">打开 DSH Go</a>
+    </div>
+    <p class="be-hint">「打开 DSH Go」没反应时，手动切到 DSH Go，等引擎启动后回来点重试。</p>
+    <p class="be-hint">终端用户也可以运行 <code>bash start-phone.sh</code></p>
+  </div>
+</div>
+
+<!-- 添加到桌面说明 -->
+<div class="modal-mask" id="modal-install" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2>添加到桌面</h2>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal-body">
+      <div id="install-steps" class="install-steps"></div>
+      <div class="hint-box">装好后从桌面图标打开，没有地址栏，和 App 一样；账本数据仍然只存在这台手机上。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" data-close>知道了</button>
+      <button class="btn primary" id="btn-install-go" hidden>现在安装</button>
+    </div>
+  </div>
+</div>
 
 <script src="/web/app.js"></script>
 </body>
