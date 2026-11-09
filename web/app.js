@@ -15,6 +15,7 @@ const state = {
   alloc: null,
   curTpl: null,
   chartRange: '1y',
+  chartMode: 'pnl',
   chartPoints: [],
   txnFilter: { from: '', to: '', code: '' },
   txnShown: 40,   // 流水默认展示条数，超出部分按需展开
@@ -1435,45 +1436,68 @@ function bindFundLinks(root) {
 
 /* ---------------- SVG 走势图 ---------------- */
 
-function renderChart(points) {
+function renderChart(allPoints) {
   const box = $('#chart');
   const legend = $('#chart-legend');
-  state.chartPoints = points;
-  if (!points.length) {
+  state.chartPoints = allPoints;
+  if (!allPoints.length) {
     box.classList.add('is-empty');
-    box.innerHTML = '<div class="empty">暂无净值数据，点右上角「更新净值」</div>';
+    box.innerHTML = '<div class="empty">暂无收益数据，点右上角「更新净值」</div>';
     legend.innerHTML = '';
     return;
   }
-  box.classList.remove('is-empty');
+
+  // 建仓前不画一长串 0：从第一笔真正投入的日期开始
+  const firstActive = allPoints.findIndex(
+    (p) => Number(p.invested) > 0 || Math.abs(Number(p.total_pnl) || 0) > 0.0001
+  );
+  const points = firstActive > 0 ? allPoints.slice(firstActive) : allPoints;
+
+  const mode = state.chartMode === 'pct' ? 'pct' : 'pnl';
+  const key = mode === 'pct' ? 'return_pct' : 'total_pnl';
+  const valueOf = (p) => {
+    const v = Number(p[key]);
+    if (Number.isFinite(v)) return v;
+    // 兼容还没有 total_pnl / return_pct 的旧接口
+    return mode === 'pct' ? 0 : (Number(p.value) || 0) - (Number(p.cost) || 0);
+  };
 
   // 按容器实际像素画，viewBox 与显示尺寸一致，手机上的坐标文字才不会被横向压扁
   const compact = window.matchMedia('(max-width: 720px)').matches;
   const W = Math.max(240, Math.round(box.clientWidth || (compact ? 340 : 760)));
   const H = Math.max(190, Math.round(box.clientHeight || (compact ? 210 : 250)));
-  const P = { t: 14, r: compact ? 8 : 12, b: 24, l: compact ? 44 : 58 };
+  const P = { t: 18, r: compact ? 10 : 14, b: 24, l: compact ? 48 : 64 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
 
-  const vals = points.flatMap((p) => [p.value, p.cost]);
-  let min = Math.min(...vals), max = Math.max(...vals);
-  if (max - min < 1) { max += 1; min = Math.max(0, min - 1); }
-  const pad = (max - min) * 0.12;
-  min = Math.max(0, min - pad);
-  max = max + pad;
+  const vals = points.map(valueOf);
+  let min = Math.min(...vals, 0);
+  let max = Math.max(...vals, 0);
+  if (max - min < 1) {
+    const base = mode === 'pct' ? 0.5 : 1;
+    min -= base;
+    max += base;
+  }
+  const pad = (max - min) * 0.14;
+  min -= pad;
+  max += pad;
 
   const x = (i) => P.l + (points.length === 1 ? iw / 2 : (i / (points.length - 1)) * iw);
   const y = (v) => P.t + ih - ((v - min) / (max - min)) * ih;
+  const linePath = points
+    .map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(valueOf(p)).toFixed(1)}`)
+    .join('');
 
-  const linePath = (key) => points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join('');
-  const areaPath = `${linePath('value')}L${x(points.length - 1).toFixed(1)},${(P.t + ih).toFixed(1)}L${x(0).toFixed(1)},${(P.t + ih).toFixed(1)}Z`;
-
+  const zeroY = y(0);
   const ticks = 4;
   let grid = '';
   for (let i = 0; i <= ticks; i++) {
     const v = min + ((max - min) * i) / ticks;
     const yy = y(v);
     grid += `<line x1="${P.l}" y1="${yy.toFixed(1)}" x2="${W - P.r}" y2="${yy.toFixed(1)}" stroke="var(--line)" stroke-width="1" opacity=".7"/>`;
-    const label = Math.abs(v) >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0);
+    let label;
+    if (mode === 'pct') label = v.toFixed(1) + '%';
+    else if (Math.abs(v) >= 10000) label = (v / 10000).toFixed(1) + '万';
+    else label = v.toFixed(0);
     grid += `<text x="${P.l - 8}" y="${(yy + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--ink-3)" font-family="var(--mono)">${label}</text>`;
   }
 
@@ -1487,29 +1511,26 @@ function renderChart(points) {
   }
 
   const last = points[points.length - 1];
-  const lastColor = last.value >= last.cost ? 'var(--up)' : 'var(--down)';
+  const lastVal = valueOf(last);
+  const lastColor = lastVal > 0 ? 'var(--up)' : lastVal < 0 ? 'var(--down)' : 'var(--ink-3)';
+  const modeName = mode === 'pct' ? '累计收益率' : '累计盈亏';
+  const summaryText = mode === 'pct' ? pct(last.return_pct) : money(last.total_pnl, true);
 
   box.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" id="chart-svg">
-      <defs>
-        <linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${lastColor}" stop-opacity=".16"/>
-          <stop offset="100%" stop-color="${lastColor}" stop-opacity="0"/>
-        </linearGradient>
-      </defs>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" id="chart-svg" style="touch-action:pan-y">
       ${grid}
-      <path d="${areaPath}" fill="url(#gArea)"/>
-      <path d="${linePath('cost')}" fill="none" stroke="var(--ink-3)" stroke-width="1.4" stroke-dasharray="4 3" opacity=".8" vector-effect="non-scaling-stroke"/>
-      <path d="${linePath('value')}" fill="none" stroke="${lastColor}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-      <circle cx="${x(points.length - 1).toFixed(1)}" cy="${y(last.value).toFixed(1)}" r="3.5" fill="${lastColor}"/>
+      <line x1="${P.l}" y1="${zeroY.toFixed(1)}" x2="${W - P.r}" y2="${zeroY.toFixed(1)}" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="4 3" opacity=".55" vector-effect="non-scaling-stroke"/>
+      <text x="${P.l - 8}" y="${(zeroY + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--ink-2)" font-family="var(--mono)" font-weight="600">${mode === 'pct' ? '0%' : '0'}</text>
+      <path d="${linePath}" fill="none" stroke="${lastColor}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+      <circle cx="${x(points.length - 1).toFixed(1)}" cy="${y(lastVal).toFixed(1)}" r="4" fill="${lastColor}"/>
       ${xLabels}
       <line id="crosshair" x1="0" y1="${P.t}" x2="0" y2="${P.t + ih}" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="3 3" opacity="0" vector-effect="non-scaling-stroke"/>
     </svg>
     <div class="chart-tip" id="chart-tip" style="position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:11.5px;box-shadow:var(--shadow);opacity:0;transition:opacity .12s;white-space:nowrap;z-index:5"></div>`;
 
   legend.innerHTML = `
-    <span><i style="background:${lastColor}"></i>持仓市值</span>
-    <span><i style="background:var(--ink-3)"></i>持仓成本</span>
+    <span><i style="background:${lastColor}"></i>${modeName}</span>
+    <span style="font-weight:650;color:${lastColor}">${summaryText}</span>
     <span style="margin-left:auto">区间 ${points[0].date} → ${last.date}</span>`;
 
   // 悬停 / 手指按住查看
@@ -1530,7 +1551,7 @@ function renderChart(points) {
     cross.setAttribute('x1', x(idx));
     cross.setAttribute('x2', x(idx));
     cross.setAttribute('opacity', '.6');
-    tip.innerHTML = `<b>${p.date}</b><br>市值 ${money(p.value)}<br>成本 ${money(p.cost)}<br>
+    tip.innerHTML = `<b>${p.date}</b><br>累计盈亏 ${money(p.total_pnl, true)}<br>累计收益率 ${pct(p.return_pct)}<br>
       <span style="color:${p.pnl >= 0 ? 'var(--up)' : 'var(--down)'}">当日 ${money(p.pnl, true)}</span>`;
     const tipW = tip.offsetWidth || 150;
     tip.style.left = Math.min(Math.max(x(idx) - tipW / 2, 4), Math.max(4, W - tipW - 4)) + 'px';
@@ -1552,7 +1573,6 @@ function renderChart(points) {
   });
   svg.addEventListener('pointerup', () => {
     touching = false;
-    // 手指抬起后留一会儿，方便看清最后按到的数字
     hideTimer = setTimeout(hide, 2400);
   });
   svg.addEventListener('pointercancel', () => { touching = false; hide(); });
@@ -1560,7 +1580,7 @@ function renderChart(points) {
     if (ev.pointerType === 'mouse') { touching = false; hide(); }
   });
   if (!window.PointerEvent) {
-    svg.addEventListener('mousemove', (ev) => showAt(ev.clientX));  // 老浏览器兜底
+    svg.addEventListener('mousemove', (ev) => showAt(ev.clientX));
   }
   svg.addEventListener('mouseleave', () => { if (!touching) hide(); });
 }
@@ -1571,6 +1591,16 @@ $$('#chart-range button').forEach((b) => {
     b.classList.add('active');
     state.chartRange = b.dataset.range;
     loadOverview();
+  });
+});
+
+$$('#chart-mode button').forEach((b) => {
+  b.addEventListener('click', () => {
+    $$('#chart-mode button').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.chartMode = b.dataset.mode === 'pct' ? 'pct' : 'pnl';
+    const pts = state.chartPoints || (state.overview && state.overview.series && state.overview.series.points);
+    if (pts && pts.length) renderChart(pts);
   });
 });
 

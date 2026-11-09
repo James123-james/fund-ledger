@@ -343,10 +343,36 @@ def portfolio_series(conn, date_from, date_to):
     # 初始化：把区间起点前的交易先结算掉
     shares = defaultdict(float)
     cost = defaultdict(float)
+    realized = 0.0
+    invested = 0.0
+
+    def book(t):
+        """记账：更新份额/成本，同时累计已实现盈亏与总投入。
+
+        收益曲线要的是「从开始到现在一共赚/亏了多少」，
+        不能只看 value - cost（那会把已经卖掉的基金盈亏漏掉）。
+        """
+        nonlocal realized, invested
+        code = t["code"]
+        action = t["action"]
+        amt = float(t.get("amount") or 0)
+        sh = float(t.get("shares") or 0)
+        fee = float(t.get("fee") or 0)
+        if action in db.BUY_ACTIONS:
+            invested += amt
+        elif action in db.SELL_ACTIONS:
+            before = shares[code]
+            avg = cost[code] / before if before > EPS else 0.0
+            release = min(sh, before) * avg
+            realized += amt - fee - release
+        elif action == "dividend" and sh <= 0:
+            realized += amt - fee
+        _apply_event(shares, cost, t)
+
     for t in conn.execute(
         "SELECT * FROM txns WHERE date < ? ORDER BY date ASC, id ASC", (date_from,)
     ).fetchall():
-        _apply_event(shares, cost, dict(t))
+        book(dict(t))
 
     last_nav = {}
     for code, m in navmap.items():
@@ -394,11 +420,12 @@ def portfolio_series(conn, date_from, date_to):
 
         # 应用当日交易
         for t in events.get(d, []):
-            _apply_event(shares, cost, t)
+            book(t)
 
         value = sum(shares[c] * last_nav.get(c, 0.0) for c in shares if shares[c] > EPS)
         value += sum(money_income.values())
         total_cost = sum(cost.values())
+        total_pnl = value - total_cost + realized
 
         points.append(
             {
@@ -407,6 +434,10 @@ def portfolio_series(conn, date_from, date_to):
                 "cost": round(total_cost, 2),
                 "pnl": round(day_pnl, 2),
                 "pct": round(day_pnl / prev_value * 100, 3) if prev_value and prev_value > EPS else 0.0,
+                "invested": round(invested, 2),
+                "realized": round(realized, 2),
+                "total_pnl": round(total_pnl, 2),
+                "return_pct": round(total_pnl / invested * 100, 2) if invested > EPS else 0.0,
             }
         )
         prev_value = value
@@ -436,6 +467,8 @@ def portfolio_series(conn, date_from, date_to):
             "end_value": last["value"],
             "change": round(last["value"] - first["value"], 2),
             "max_drawdown": round(max_dd, 2),
+            "total_pnl": round(last["total_pnl"], 2),
+            "return_pct": last["return_pct"],
             "days": len(points),
         },
     }
