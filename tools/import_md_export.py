@@ -7,9 +7,9 @@
   - 收益归因（给已清仓基金补类别）
   - 操作流水（全部买卖、分红、定投）
 
-不导入：
-  - 定投计划的规则（历史流水完整保留，计划可在界面里再建）
-  - 每日净值序列（导出里只有组合层面的逐日数据，没有各基金逐日净值；
+会恢复：
+  - 定投计划规则，并把历史定投流水挂到对应计划上
+  - 不导入每日净值序列（导出里只有组合层面的逐日数据，没有各基金逐日净值；
     联网后点「更新净值」可以补齐）
 
 用法：
@@ -17,6 +17,9 @@
     python3 tools/import_md_export.py 导出.md --out /tmp/fund.db --reset
 
 建议先 --out 到临时文件，核对无误后再用服务端的「导入账本」接口替换。
+
+注意：本工具只写持仓表里的最新净值。导入后先在 App 里点一次「更新净值」补齐历史，
+定投纪律统计和到期补生成才完整。
 """
 
 import argparse
@@ -24,6 +27,7 @@ import os
 import re
 import sqlite3
 import sys
+from collections import Counter, defaultdict
 from datetime import datetime
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -138,6 +142,163 @@ def text(value):
     return "" if s in ("—", "-", "–", "--", "") else s
 
 
+WEEKDAY_MAP = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+
+
+def parse_period(value):
+    """把「每周周一 / 每个交易日 / 每月15日」解析成计划字段。"""
+    p = re.sub(r"\s+", "", value or "")
+    if "每个交易日" in p or "每交易日" in p:
+        return {"freq": "daily"}
+    if "每两周" in p:
+        return None  # 当前 sip_plans 没有双周频率
+    m = re.search(r"每月(\d{1,2})", p)
+    if m:
+        return {"freq": "monthly", "monthday": int(m.group(1))}
+    m = re.search(r"周([一二三四五六日天])", p)
+    if m:
+        return {"freq": "weekly", "weekday": WEEKDAY_MAP[m.group(1)]}
+    return None
+
+
+def restore_plans(conn, plan_rows, funds, txn_rows, txn_ids, now):
+    """按导出 3.6 节恢复定投计划，并把历史定投流水挂到 plan_id 上。
+
+    返回 (计划数, 关联流水数, 提示列表)。
+    周计划取「最后 N 个对应星期」的流水，日计划取剩余流水；
+    这样同一只基金先日定投、后改周定时，两段不会串。
+    """
+    warnings = []
+    if not plan_rows:
+        return 0, 0, warnings
+    existing = conn.execute("SELECT COUNT(*) AS c FROM sip_plans").fetchone()["c"]
+    if existing:
+        return 0, 0, [f"目标库已有 {existing} 个定投计划，跳过恢复"]
+
+    name_to_code = {(info.get("name") or "").strip(): code for code, info in funds.items()}
+
+    def resolve_code(name):
+        name = (name or "").strip()
+        if name in name_to_code:
+            return name_to_code[name]
+        for code, info in funds.items():
+            fn = (info.get("name") or "").strip()
+            if name and fn and (name in fn or fn in name):
+                return code
+        return None
+
+    sip_by_code = defaultdict(list)
+    for row in txn_rows:
+        if ACTION_MAP.get((row.get("操作") or "").strip()) != "sip":
+            continue
+        code = (row.get("代码") or "").strip()
+        date = (row.get("日期") or "").strip()
+        ids = txn_ids.get((code, date), [])
+        if not ids:
+            continue
+        sip_by_code[code].append({
+            "date": date,
+            "amount": num(row.get("金额(元)"), 0.0),
+            "ids": ids,
+        })
+    for items in sip_by_code.values():
+        items.sort(key=lambda x: x["date"])
+
+    specs = []
+    for row in plan_rows:
+        name = (row.get("基金") or "").strip()
+        code = resolve_code(name)
+        period = (row.get("周期") or "").strip()
+        parsed = parse_period(period)
+        actual = int(num(row.get("实扣"), 0) or 0)
+        status = (row.get("状态") or "").strip()
+        if not code:
+            warnings.append(f"计划「{name}」找不到对应基金，跳过")
+            continue
+        if not parsed:
+            warnings.append(f"计划「{name} {period}」周期无法识别，跳过")
+            continue
+        if actual <= 0:
+            warnings.append(f"计划「{name} {period}」没有实扣记录，跳过")
+            continue
+        specs.append({
+            "code": code,
+            "name": name,
+            "period": period,
+            "actual": actual,
+            "enabled": 1 if "进行" in status else 0,
+            "reason": text(row.get("决策理由")),
+            **parsed,
+        })
+
+    created = 0
+    linked = 0
+
+    by_code = defaultdict(list)
+    for spec in specs:
+        by_code[spec["code"]].append(spec)
+
+    for code, code_specs in by_code.items():
+        items = sip_by_code.get(code, [])
+        if not items:
+            warnings.append(f"{code} 有定投计划但没有找到定投流水，跳过")
+            continue
+        used = set()
+        # 先处理周/月计划，再处理日计划，避免日计划把周计划的日期吃掉
+        ordered = sorted(code_specs, key=lambda s: (0 if s["freq"] in ("weekly", "monthly") else 1))
+        for spec in ordered:
+            candidates = [it for it in items if it["date"] not in used]
+            if spec["freq"] == "daily":
+                chosen = candidates
+            elif spec["freq"] == "weekly":
+                chosen = [
+                    it for it in candidates
+                    if datetime.fromisoformat(it["date"]).weekday() == spec["weekday"]
+                ]
+                chosen = chosen[-spec["actual"]:] if len(chosen) > spec["actual"] else chosen
+            elif spec["freq"] == "monthly":
+                chosen = [
+                    it for it in candidates
+                    if datetime.fromisoformat(it["date"]).day == spec["monthday"]
+                ]
+                chosen = chosen[-spec["actual"]:] if len(chosen) > spec["actual"] else chosen
+            else:
+                continue
+            if not chosen:
+                warnings.append(f"{spec['name']} {spec['period']}：没有可关联的定投流水，跳过")
+                continue
+            dates = [it["date"] for it in chosen]
+            amounts = [it["amount"] for it in chosen if it["amount"]]
+            amount = Counter(round(a, 2) for a in amounts).most_common(1)[0][0] if amounts else 0
+            if amount <= 0:
+                warnings.append(f"{spec['name']} {spec['period']}：无法推断每期金额，跳过")
+                continue
+            start = min(dates)
+            end = max(dates)
+            note = (spec["period"] + "（从导出恢复）")[:60]
+            cur = conn.execute(
+                "INSERT INTO sip_plans (code, amount, fee_rate, freq, weekday, monthday, start_date, "
+                "end_date, last_run, holiday_mode, enabled, note, reason, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    code, round(amount, 2), 0.0, spec["freq"], spec.get("weekday"),
+                    spec.get("monthday"), start, None if spec["enabled"] else end, end,
+                    "shift", spec["enabled"], note, spec["reason"], now,
+                ),
+            )
+            plan_id = cur.lastrowid
+            ids = [i for it in chosen for i in it["ids"]]
+            conn.executemany("UPDATE txns SET plan_id=? WHERE id=?", [(plan_id, i) for i in ids])
+            used.update(dates)
+            created += 1
+            linked += len(ids)
+            if len(chosen) != spec["actual"]:
+                warnings.append(
+                    f"{spec['name']} {spec['period']}：导出实扣 {spec['actual']} 期，实际关联 {len(chosen)} 期"
+                )
+    return created, linked, warnings
+
+
 # ---------------------------------------------------------------- 主流程
 
 
@@ -175,6 +336,14 @@ def main():
     _, txn_rows = find_table(txn_tables, "日期", "成交净值", "操作")
     if not txn_rows:
         raise SystemExit("没有解析到「操作流水」表")
+
+    # 定投计划表（3.6 节）；老版本导出没有这一节时静默跳过
+    plan_rows = []
+    try:
+        plan_tables = parse_tables(section(lines, "### 3.6", ("### ", "## ")))
+        _, plan_rows = find_table(plan_tables, "应扣", "实扣")
+    except SystemExit:
+        plan_rows = []
 
     # ---- 汇总基金与类别
     funds = {}
@@ -233,6 +402,7 @@ def main():
             conn.execute("DELETE FROM txns")
             conn.execute("DELETE FROM nav")
             conn.execute("DELETE FROM funds")
+            conn.execute("DELETE FROM sip_plans")
             conn.commit()
 
         now = datetime.now().isoformat(timespec="seconds")
@@ -258,6 +428,7 @@ def main():
 
         # ---- 流水
         inserted = 0
+        txn_ids = defaultdict(list)
         for row in txn_rows:
             action_name = (row.get("操作") or "").strip()
             action = ACTION_MAP.get(action_name)
@@ -273,11 +444,12 @@ def main():
             fee = num(row.get("手续费(元)"), 0.0)
             note = text(row.get("备注"))
             reason = text(row.get("决策理由"))
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO txns (code, date, action, amount, shares, nav, fee, plan_id, reason, note, created_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (code, date, action, amount, shares, nav, fee, None, reason, note, now),
             )
+            txn_ids[(code, date)].append(cur.lastrowid)
             inserted += 1
 
         # ---- 最新净值：只写持仓表里的最新一条，供当前市值计算
@@ -303,6 +475,9 @@ def main():
             )
             nav_rows += 1
 
+        plans_created, sip_linked, plan_warnings = restore_plans(
+            conn, plan_rows, funds, txn_rows, txn_ids, now
+        )
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
@@ -317,7 +492,14 @@ def main():
     finally:
         conn.close()
 
+    if plans_created:
+        plan_warnings.append(
+            "定投计划已恢复；历史净值仍只有最新一条，先在 App 里「更新净值」，纪律统计和补生成才完整"
+        )
     print(f"写入：{len(funds)} 只基金，{inserted} 笔流水，{nav_rows} 条最新净值")
+    print(f"恢复：{plans_created} 个定投计划，关联 {sip_linked} 笔历史定投")
+    for warning in plan_warnings:
+        print(f"  提示：{warning}")
     print(f"输出：{out}")
     print("")
     print("核对（导出 → 重建）：")
