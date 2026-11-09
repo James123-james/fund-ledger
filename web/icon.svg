@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="基金台账">
+  <rect width="512" height="512" rx="116" fill="#146b5c"/>
+  <rect x="92" y="92" width="328" height="328" rx="58" fill="#f5f4ef"/>
+  <rect x="150" y="292" width="44" height="82" rx="13" fill="#146b5c" opacity=".42"/>
+  <rect x="234" y="242" width="44" height="132" rx="13" fill="#146b5c" opacity=".68"/>
+  <rect x="318" y="180" width="44" height="194" rx="13" fill="#146b5c"/>
+  <circle cx="340" cy="153" r="18" fill="#a8762a"/>
+</svg>

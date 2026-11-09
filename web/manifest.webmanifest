@@ -1,0 +1,29 @@
+{
+  "id": "/",
+  "name": "基金台账",
+  "short_name": "台账",
+  "description": "个人基金台账：记录买卖、算清成本与盈亏，手机本地可用。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#f5f4ef",
+  "theme_color": "#f5f4ef",
+  "icons": [
+    { "src": "/web/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/web/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/web/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "记一笔",
+      "short_name": "记一笔",
+      "description": "直接打开记账弹窗",
+      "url": "/?new=1",
+      "icons": [{ "src": "/web/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
