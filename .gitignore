@@ -34,6 +34,7 @@ fund-ledger_*.json
 !LICENSE.md
 !CONTRIBUTING.md
 !docs/**/*.md
+!skills/**/*.md
 
 # ================================================================
 #  Python
