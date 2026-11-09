@@ -331,6 +331,13 @@ def portfolio_series(conn, date_from, date_to):
     for t in txns:
         events[t["date"]].append(t)
 
+    # 没有持仓之前不画一长串 0：从第一笔交易开始
+    first_txn = conn.execute("SELECT MIN(date) AS d FROM txns").fetchone()["d"]
+    if not first_txn:
+        return {"points": [], "stats": {}}
+    if date_from < first_txn:
+        date_from = first_txn
+
     # 日期轴：区间内所有净值日的并集，再补上「有交易但没有净值」的日期
     # （例如今天买入、今天净值还没公布，这笔钱也要计入市值，否则曲线终点会和持仓市值对不上）
     all_dates = sorted(

@@ -17,6 +17,7 @@ const state = {
   chartRange: '1y',
   chartMode: 'pnl',
   chartPoints: [],
+  seriesAll: [],
   txnFilter: { from: '', to: '', code: '' },
   txnShown: 40,   // 流水默认展示条数，超出部分按需展开
   sipPlans: [],
@@ -219,16 +220,27 @@ $$('.tab, .bn').forEach((b) => b.addEventListener('click', () => switchView(b.da
    总览
    ============================================================ */
 
+function pointsForRange(points) {
+  if (!points || !points.length) return [];
+  const { from } = shiftRange(state.chartRange);
+  return points.filter((p) => p.date >= from);
+}
+
 async function loadOverview() {
-  const { from, to } = shiftRange(state.chartRange);
   const seq = ++seqOverview;
+  const { to } = shiftRange('all');
   try {
-    const data = await api(`/api/overview?from=${state.chartRange === 'all' ? '2000-01-01' : from}&to=${to}`);
+    // 一次拿完整序列，区间按钮只在本地切片，切换时不再等网络
+    const [data, series] = await Promise.all([
+      api('/api/overview'),
+      api(`/api/series?from=2000-01-01&to=${to}`),
+    ]);
     if (seq !== seqOverview) return;
     state.overview = data;
+    state.seriesAll = (series && series.points) || [];
     renderStats(data.summary);
     renderPositions(data.positions || []);
-    renderChart((data.series && data.series.points) || []);
+    renderChart(pointsForRange(state.seriesAll));
     loadReturns();
     loadBehavior();
     loadBenchmark();
@@ -1590,7 +1602,11 @@ $$('#chart-range button').forEach((b) => {
     $$('#chart-range button').forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
     state.chartRange = b.dataset.range;
-    loadOverview();
+    if (state.seriesAll.length) {
+      renderChart(pointsForRange(state.seriesAll));
+    } else {
+      loadOverview();
+    }
   });
 });
 
@@ -1599,7 +1615,7 @@ $$('#chart-mode button').forEach((b) => {
     $$('#chart-mode button').forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
     state.chartMode = b.dataset.mode === 'pct' ? 'pct' : 'pnl';
-    const pts = state.chartPoints || (state.overview && state.overview.series && state.overview.series.points);
+    const pts = state.chartPoints || pointsForRange(state.seriesAll);
     if (pts && pts.length) renderChart(pts);
   });
 });
@@ -1609,7 +1625,7 @@ let chartResizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(chartResizeTimer);
   chartResizeTimer = setTimeout(() => {
-    const pts = state.chartPoints || (state.overview && state.overview.series && state.overview.series.points);
+    const pts = state.chartPoints || pointsForRange(state.seriesAll);
     if (pts && pts.length && $('#view-overview').classList.contains('active')) renderChart(pts);
     if (state.fundDetail && $('#view-fund').classList.contains('active')) renderFundChart(state.fundDetail);
   }, 180);
