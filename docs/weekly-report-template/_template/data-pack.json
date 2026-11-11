@@ -1,0 +1,53 @@
+{
+  "week": "YYYY-Www",
+  "as_of": "YYYY-MM-DD",
+  "generated_at": "YYYY-MM-DDTHH:MM:SS+08:00",
+  "regime": {
+    "code": "",
+    "label": "",
+    "confidence": "low",
+    "changed": null,
+    "notes": []
+  },
+  "macro": [
+    {
+      "key": "us10y_tips",
+      "label": "美债实际利率 10Y",
+      "value": null,
+      "unit": "%",
+      "change": null,
+      "source": "",
+      "as_of": ""
+    }
+  ],
+  "candidates": [
+    {
+      "sector": "",
+      "track": "value",
+      "score": null,
+      "metrics": {
+        "valuation_percentile": null,
+        "fund_flow_5d": null,
+        "momentum_20d": null,
+        "prosperity_score": null
+      },
+      "sources": [],
+      "catalysts": [],
+      "risks": [],
+      "overlap_with_holdings": null
+    }
+  ],
+  "holdings": [
+    {
+      "code": "",
+      "name": "",
+      "weight": null,
+      "correlation": {}
+    }
+  ],
+  "data_quality": {
+    "missing": [],
+    "stale": [],
+    "warnings": []
+  }
+}
