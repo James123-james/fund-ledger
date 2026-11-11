@@ -187,6 +187,18 @@ def fetch_etf(ak, code):
     return df.sort_values("date")
 
 
+def fetch_index_price(ak, symbol):
+    """新浪指数日线；用于没有 ETF、但有指数代码的方向。"""
+    df = ak.stock_zh_index_daily(symbol=symbol)
+    if df is None or len(df) == 0:
+        return None
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df = df[df["date"] >= (date.today() - timedelta(days=365 * 5))]
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    return df.sort_values("date")
+
+
 def _round(v, n=2):
     try:
         f = float(v)
@@ -207,10 +219,18 @@ def build_metrics(ak, watchlist, source_map, cache_dir):
     index_data = {}
     for name in index_names:
         print(f"  宽基估值：{name}")
-        try:
-            index_data[name] = fetch_index_pe(ak, name)
-        except Exception as exc:
-            warnings.append(f"{name} 估值失败：{type(exc).__name__}")
+        last_exc = None
+        for attempt in range(3):
+            try:
+                index_data[name] = fetch_index_pe(ak, name)
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+        if last_exc is not None:
+            warnings.append(f"{name} 估值失败（重试 3 次）：{type(last_exc).__name__}")
 
     etf_codes = sorted(
         {cfg["etf"] for cfg in mappings.values() if cfg.get("valuation") == "price" and cfg.get("etf")}
@@ -222,6 +242,17 @@ def build_metrics(ak, watchlist, source_map, cache_dir):
             etf_data[code] = fetch_etf(ak, code)
         except Exception as exc:
             warnings.append(f"ETF {code} 失败：{type(exc).__name__}")
+
+    index_price_symbols = sorted(
+        {cfg["index_symbol"] for cfg in mappings.values() if cfg.get("valuation") == "price" and cfg.get("index_symbol")}
+    )
+    index_price_data = {}
+    for symbol in index_price_symbols:
+        print(f"  指数价格：{symbol}")
+        try:
+            index_price_data[symbol] = fetch_index_price(ak, symbol)
+        except Exception as exc:
+            warnings.append(f"指数 {symbol} 失败：{type(exc).__name__}")
 
     print("  申万行业：当前快照")
     sw_current = fetch_sw_current(ak)
@@ -310,13 +341,15 @@ def build_metrics(ak, watchlist, source_map, cache_dir):
 
         elif mode == "price":
             code = cfg.get("etf", "")
-            df = etf_data.get(code)
+            symbol = cfg.get("index_symbol", "")
+            df = etf_data.get(code) if code else index_price_data.get(symbol)
+            source_name = "sina_etf" if code else "sina_index"
             if df is not None and len(df):
                 row = df.iloc[-1]
                 result.update(
                     {
                         "status": "price_only",
-                        "source": "sina",
+                        "source": source_name,
                         "as_of": str(row["date"]),
                         "metrics": {
                             **price_metrics(df["close"].tolist(), daily=True),
@@ -327,7 +360,7 @@ def build_metrics(ak, watchlist, source_map, cache_dir):
                 )
                 warnings.append(f"{names.get(did, did)} 只有价格分位，没有 PE/PB")
             else:
-                warnings.append(f"{names.get(did, did)} 缺 ETF 价格代理")
+                warnings.append(f"{names.get(did, did)} 缺 ETF/指数价格代理")
 
         directions[did] = result
 
@@ -338,6 +371,9 @@ def build_metrics(ak, watchlist, source_map, cache_dir):
     for code, df in etf_data.items():
         if df is not None:
             df.to_csv(os.path.join(cache_dir, f"etf_{code}.csv"), index=False)
+    for symbol, df in index_price_data.items():
+        if df is not None:
+            df.to_csv(os.path.join(cache_dir, f"indexprice_{symbol}.csv"), index=False)
 
     return {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),

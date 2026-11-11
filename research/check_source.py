@@ -81,6 +81,21 @@ def check_etf(ak, code, years=5):
     }
 
 
+def check_index_price(ak, symbol, years=5):
+    df = ak.stock_zh_index_daily(symbol=symbol)
+    if df is None or len(df) == 0:
+        return None
+    cutoff = date.today() - timedelta(days=365 * years)
+    rows = [r for r in df.itertuples(index=False) if str(getattr(r, "date", ""))[:10] >= cutoff.isoformat()]
+    return {
+        "rows": len(df),
+        "rows_5y": len(rows),
+        "start": _fmt_date(df.iloc[0]["date"]),
+        "end": _fmt_date(df.iloc[-1]["date"]),
+        "last": round(float(df.iloc[-1]["close"]), 3),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description="检查 AKShare 数据覆盖")
     ap.add_argument("--watchlist", default="research/config/watchlist.draft.yml")
@@ -144,18 +159,24 @@ def main():
 
         elif mode == "price":
             code = cfg.get("etf", "")
-            if code:
-                try:
+            symbol = cfg.get("index_symbol", "")
+            try:
+                if code:
                     info = check_etf(ak, code)
-                    if info:
-                        prices = f"{code} {info['rows_5y']}行 · {info['last']}"
-                        status = "Sina价格，无5年估值"
-                    else:
-                        status = "ETF 无数据"
-                except Exception as exc:
-                    status = f"ERR {type(exc).__name__}"
-            else:
-                status = "缺 ETF 代理"
+                    label = code
+                elif symbol:
+                    info = check_index_price(ak, symbol)
+                    label = symbol
+                else:
+                    info = None
+                    label = ""
+                if info:
+                    prices = f"{label} {info['rows_5y']}行 · {info['last']}"
+                    status = "Sina价格，无5年估值"
+                else:
+                    status = "无 ETF/指数价格"
+            except Exception as exc:
+                status = f"ERR {type(exc).__name__}"
 
         print(f"{name:12} {mode:10} {estimate:22} {prices:18} {status}")
 

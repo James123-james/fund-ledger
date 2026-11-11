@@ -13,8 +13,10 @@ mappings:
   csi_a500:
     valuation: price
     index_name: ""
-    proxy: true
+    index_symbol: "sh000510"
+    proxy: false
     etf: ""
+    note: "中证A500指数价格（含回溯），无 PE/PB"
 
   dividend_lowvol:
     valuation: index_pe
