@@ -195,6 +195,16 @@ def fetch_macro(manual_path=MANUAL):
         cfg = manual.get(key) or {}
         value = cfg.get("value")
         if value is not None:
+            as_of = str(cfg.get("as_of") or date.today().isoformat())[:10]
+            age = None
+            stale = False
+            try:
+                age = (date.today() - date.fromisoformat(as_of)).days
+                stale = age > 7
+            except ValueError:
+                pass
+            if stale:
+                warnings.append(f"{label} 手动值已 {age} 天未更新，按 stale 处理")
             by_key[key] = {
                 "key": key,
                 "label": label,
@@ -204,8 +214,10 @@ def fetch_macro(manual_path=MANUAL):
                 "change_1m": None,
                 "change_mode": "manual",
                 "source": cfg.get("source", "manual"),
-                "as_of": cfg.get("as_of", date.today().isoformat()),
+                "as_of": as_of,
                 "status": "manual",
+                "age_days": age,
+                "stale": stale,
                 "note": cfg.get("note", ""),
             }
         elif key not in by_key:
@@ -220,6 +232,8 @@ def fetch_macro(manual_path=MANUAL):
                 "source": "manual",
                 "as_of": "",
                 "status": "missing",
+                "age_days": None,
+                "stale": None,
                 "note": "可在 macro_manual.yml 手填",
             }
 
