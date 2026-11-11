@@ -34,7 +34,9 @@
       "sources": [],
       "catalysts": [],
       "risks": [],
-      "overlap_with_holdings": null
+      "overlap_with_holdings": null,
+      "crowding": {"level": "", "basis": "", "assessed": false},
+      "input_risk": {"level": "", "basis": "", "assessed": false}
     }
   ],
   "holdings": [

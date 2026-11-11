@@ -126,6 +126,7 @@ cp research/skill/weekly-report.md ~/.dsh/skills/fund-ledger-weekly-report/SKILL
 - 相关性 13/13 已算；9 个方向 >0.7 高重叠
 - 本周观察：半导体（价值轨）、机器人（趋势轨）；不操作
 - 评分模型未校准，所以暂不写分数
+- 拥挤度/输入性风险是人工旗标：未接入成交额/换手率/暴露矩阵，报告标“推断”
 
 ## 4 周复盘怎么看
 
@@ -140,6 +141,7 @@ cp research/skill/weekly-report.md ~/.dsh/skills/fund-ledger-weekly-report/SKILL
 2. 每周更新美元指数手填值；超过 7 天会标 stale
 3. 4 周后复盘命中率，再决定是否校准评分模型
 4. 观察池去掉高重叠且不看的重复方向
+5. 4 周后决定是否把拥挤度/输入性风险接成数据指标
 
 ## 约定
 
