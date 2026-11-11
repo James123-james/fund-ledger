@@ -6,7 +6,7 @@ us10y_tips:
   note: "自动源：美国财政部实际收益率曲线/FRED；取不到时手填，单位 %"
 
 dxy:
-  value: null
-  as_of: ""
-  source: "manual"
-  note: "美元指数；自动源待定，可手填"
+  value: 102.524
+  as_of: "2026-11-11"
+  source: "新浪财经 美元指数 DINIW（用户截图 20:01）"
+  note: "截图日变动 +0.2534%；周变动待补"
