@@ -71,3 +71,9 @@ desktop.ini
 *.backup
 *.orig
 *~
+
+# 半自动周报：个人数据与报告不入库；说明文档保留
+research/data/
+reports/
+research/.env
+!research/**/*.md
