@@ -1,0 +1,117 @@
+version: 1
+updated: "2026-11-11"
+status: active
+window_days: 30
+note: "高置信催化 confirmed；科创50/消费/港股科技保留 candidate；红利低波空白"
+
+directions:
+  hs300:
+    items:
+      - date: "2026-11-06"
+        type: "policy"
+        title: "国常会首提“完善资本市场稳市机制”，增强股市内在稳定性"
+        source: "南方财经/中国基金报"
+        url: "https://www.sfccn.com/2026/11-9/5OMDE0MDRfMjI5ODE5OA.html"
+        status: "confirmed"
+        note: "会议 11/6，报道 11/9；与中证A500共用一条政策"
+  csi_a500:
+    items:
+      - date: "2026-11-06"
+        type: "policy"
+        title: "国常会首提“完善资本市场稳市机制”，增强股市内在稳定性"
+        source: "南方财经/中国基金报"
+        url: "https://www.sfccn.com/2026/11-9/5OMDE0MDRfMjI5ODE5OA.html"
+        status: "confirmed"
+        note: "与沪深300共用一条政策，不重复计分"
+  dividend_lowvol:
+    items: []
+  star50:
+    items:
+      - date: "2026-11-05"
+        type: "policy"
+        title: "五部门推进算力基础设施节能降碳，间接利好国产芯片与算力"
+        source: "第一财经/网易"
+        url: "https://www.163.com/dy/article/LAUEU0TI0519DDQ2.html"
+        status: "candidate"
+        note: "科创50为间接映射，待确认是否作为独立催化"
+  semiconductor:
+    items:
+      - date: "2026-11-05"
+        type: "policy"
+        title: "五部门印发全面节约战略行动方案，推进算力节能，利好国产芯片/散热/封测"
+        source: "第一财经/网易"
+        url: "https://www.163.com/dy/article/LAUEU0TI0519DDQ2.html"
+        status: "confirmed"
+        note: "政策与需求共振；估值高企是反面证据"
+  robotics:
+    items:
+      - date: "2026-11-11"
+        type: "policy"
+        title: "北京《具身智能机器人产业高质量发展行动方案（2026—2028年）》印发"
+        source: "证券之星/21世纪经济报道"
+        url: "https://wap.stockstar.com/detail/IG2026111100036981"
+        status: "confirmed"
+        note: "11/11 印发，目标 2028 年培育 5 家国际一流整机企业"
+  innovative_drug:
+    items:
+      - date: "2026-11-09"
+        type: "event"
+        title: "医保谈判收官，124 款目录外药品入围，新版目录 11 月底前发布"
+        source: "中财网"
+        url: "https://vipwt1.cfi.cn/p20261109002145.html"
+        status: "confirmed"
+        note: "谈判落地；与现有医药基金高重叠"
+  chemicals:
+    items:
+      - date: "2026-11-04"
+        type: "policy"
+        title: "《重点产品碳足迹标准体系建设行动方案（2026—2028年）》印发，化工品涨价"
+        source: "中财网"
+        url: "https://wt.cfi.cn/p20261104000602.html"
+        status: "confirmed"
+        note: "乙二醇/PVC 领涨；与现有化工基金高度重叠"
+  nonferrous:
+    items:
+      - date: "2026-10-20"
+        type: "policy"
+        title: "工信部修订铜铝行业规范，严控铜冶炼新增产能，强化供给约束"
+        source: "长江有色金属网"
+        url: "https://alu.ccmn.cn/news/ZX003/202610/b18352a421e04357b593d723210d996b.html"
+        status: "confirmed"
+        note: "10/20，距 11/11 共 22 天；与化工基金相关性高"
+  gold:
+    items:
+      - date: "2026-11-04"
+        type: "data"
+        title: "世界黄金协会：Q3 全球央行净购金 321 吨，同比 +42%"
+        source: "南方财经/世界黄金协会"
+        url: "https://www.sfccn.com/2026/11-4/zOMDE1MjBfMjI5MzAzOQ.html"
+        status: "confirmed"
+        note: "需求端数据；与现有黄金基金高度重叠"
+  power:
+    items:
+      - date: "2026-11-10"
+        type: "policy"
+        title: "五部门完善高耗能差别化电价，提出 2030 年新型储能装机 3 亿千瓦"
+        source: "中财网"
+        url: "https://vipwt1.cfi.cn/p20261110002119.html"
+        status: "confirmed"
+        note: "火电/储能机制重塑；估值分位偏高"
+  consumer:
+    items:
+      - date: "2026-11-05"
+        type: "policy"
+        title: "河南出台进一步提振消费措施，优化个人消费贷款财政贴息"
+        source: "财联社/网易"
+        url: "https://www.163.com/dy/article/LB0DFFM305198CJN.html"
+        status: "candidate"
+        note: "区域政策，非全国；暂不抬为 confirmed"
+  hk_tech:
+    items:
+      - date: "2026-11-02"
+        type: "event"
+        title: "政策预期带动恒生科技指数反弹近 3%"
+        source: "第一财经/网易"
+        url: "https://www.163.com/dy/article/LAO4JSAA05568W0A.html"
+        status: "candidate"
+        note: "预期而非落地政策；与现有恒生科技基金高度重叠"

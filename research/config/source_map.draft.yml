@@ -1,0 +1,91 @@
+version: 1
+updated: "2026-11-11"
+status: draft
+note: "AKShare 数据映射草案；valuation=index_pe 表示有 PE/PB 历史，sw_proxy 表示用申万行业代理，price 表示只有价格分位"
+
+mappings:
+  hs300:
+    valuation: index_pe
+    index_name: "沪深300"
+    proxy: false
+    etf: ""
+
+  csi_a500:
+    valuation: price
+    index_name: ""
+    index_symbol: "sh000510"
+    proxy: false
+    etf: ""
+    note: "中证A500指数价格（含回溯），无 PE/PB"
+
+  dividend_lowvol:
+    valuation: index_pe
+    index_name: "上证红利"
+    proxy: true
+    etf: ""
+    note: "用上证红利代理红利低波；不是 H30269 原指数"
+
+  star50:
+    valuation: price
+    index_name: ""
+    proxy: true
+    etf: "588000"
+
+  semiconductor:
+    valuation: sw_proxy
+    sw_industry: "电子"
+    proxy: true
+    etf: "512480"
+    note: "电子行业代理半导体"
+
+  robotics:
+    valuation: sw_proxy
+    sw_industry: "机械设备"
+    proxy: true
+    etf: ""
+    note: "机械设备代理机器人"
+
+  innovative_drug:
+    valuation: sw_proxy
+    sw_industry: "医药生物"
+    proxy: true
+    etf: ""
+    note: "医药生物代理创新药"
+
+  chemicals:
+    valuation: sw_proxy
+    sw_industry: "基础化工"
+    proxy: false
+    etf: ""
+
+  nonferrous:
+    valuation: sw_proxy
+    sw_industry: "有色金属"
+    proxy: false
+    etf: "512400"
+
+  gold:
+    valuation: price
+    index_name: ""
+    proxy: false
+    etf: "518880"
+
+  power:
+    valuation: sw_proxy
+    sw_industry: "公用事业"
+    proxy: true
+    etf: ""
+    note: "公用事业代理电力"
+
+  consumer:
+    valuation: sw_proxy
+    sw_industry: "食品饮料"
+    proxy: true
+    etf: "159928"
+    note: "食品饮料代理消费"
+
+  hk_tech:
+    valuation: price
+    index_name: ""
+    proxy: false
+    etf: "513180"

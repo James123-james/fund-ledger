@@ -1,0 +1,109 @@
+version: 1
+updated: "2026-11-11"
+status: draft
+note: "观察池草稿，待确认后把 status 改为 active；proxy 为数据源映射，空字符串表示待映射"
+
+directions:
+  - id: hs300
+    name: "沪深300"
+    kind: broad
+    proxy: "1.000300"
+    proxy_note: "沪深300指数"
+    existing_overlap: "007339 易方达沪深300ETF联接C"
+    enabled: true
+
+  - id: csi_a500
+    name: "中证A500"
+    kind: broad
+    proxy: "1.000510"
+    proxy_note: "代码待数据源校验；与沪深300有重叠"
+    existing_overlap: "与 007339 宽基重叠"
+    enabled: true
+
+  - id: dividend_lowvol
+    name: "红利低波"
+    kind: style
+    proxy: "H30269"
+    proxy_note: "中证红利低波动指数，代码待校验"
+    existing_overlap: "007467 华泰柏瑞中证红利低波ETF联接C"
+    enabled: true
+
+  - id: star50
+    name: "科创50"
+    kind: broad
+    proxy: "1.000688"
+    proxy_note: "科创50指数"
+    existing_overlap: ""
+    enabled: true
+
+  - id: semiconductor
+    name: "半导体"
+    kind: industry
+    proxy: ""
+    proxy_note: "待映射到申万/中证半导体指数；与科创50、恒生科技有重叠"
+    existing_overlap: ""
+    enabled: true
+
+  - id: robotics
+    name: "机器人"
+    kind: theme
+    proxy: ""
+    proxy_note: "待映射到中证机器人/相关指数"
+    existing_overlap: ""
+    enabled: true
+
+  - id: innovative_drug
+    name: "创新药"
+    kind: theme
+    proxy: ""
+    proxy_note: "待映射到创新药指数；注意与现有医药基金重叠"
+    existing_overlap: "014115 广发沪港深医药混合C"
+    enabled: true
+
+  - id: chemicals
+    name: "化工"
+    kind: industry
+    proxy: "801030"
+    proxy_note: "申万化工，代码待校验"
+    existing_overlap: "021978 中欧中证细分化工产业主题指数发起C"
+    enabled: true
+
+  - id: nonferrous
+    name: "有色"
+    kind: industry
+    proxy: "801050"
+    proxy_note: "申万有色，代码待校验"
+    existing_overlap: ""
+    enabled: true
+
+  - id: gold
+    name: "黄金"
+    kind: commodity
+    proxy: "518880"
+    proxy_note: "黄金ETF代理，待确认"
+    existing_overlap: "004253 国泰黄金ETF联接C"
+    enabled: true
+
+  - id: power
+    name: "电力"
+    kind: industry
+    proxy: ""
+    proxy_note: "待映射到中证全指电力/公用事业指数"
+    existing_overlap: ""
+    enabled: true
+
+  - id: consumer
+    name: "消费"
+    kind: industry
+    proxy: "000932"
+    proxy_note: "中证主要消费，代码待校验"
+    existing_overlap: ""
+    enabled: true
+
+  - id: hk_tech
+    name: "港股科技"
+    kind: theme
+    proxy: "HSTECH"
+    proxy_note: "恒生科技指数"
+    existing_overlap: "020989 南方恒生科技ETF发起联接(QDII)C"
+    enabled: true

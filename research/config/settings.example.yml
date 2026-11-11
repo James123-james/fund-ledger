@@ -1,0 +1,16 @@
+ledger:
+  api_base: "http://127.0.0.1:8787"
+  timeout_seconds: 10
+
+paths:
+  data_dir: "research/data"
+  reports_dir: "reports"
+
+report:
+  max_directions: 3
+  max_deep_reports: 3
+  correlation_window: 120
+
+data_source:
+  provider: "pending"   # eastmoney / akshare / manual
+  macro_csv: ""
