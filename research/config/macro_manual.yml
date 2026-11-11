@@ -3,7 +3,7 @@ us10y_tips:
   value: null
   as_of: ""
   source: "manual"
-  note: "FRED DFII10 取不到时手填；单位 %"
+  note: "自动源：美国财政部实际收益率曲线/FRED；取不到时手填，单位 %"
 
 dxy:
   value: null

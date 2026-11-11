@@ -99,19 +99,43 @@ def fetch_fred(series_id, timeout=10):
     return df.dropna(subset=[series_id])
 
 
+def fetch_treasury_real():
+    """美国财政部每日实际收益率曲线（10Y TIPS 代理）。"""
+    url = (
+        "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+        "daily-treasury-rates.csv/2026/all?type=daily_treasury_real_yield_curve"
+        "&field_tdr_date_value=2026&page&_format=csv"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = resp.read()
+    df = pd.read_csv(io.BytesIO(raw))
+    df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y", errors="coerce").dt.date
+    df["10 YR"] = pd.to_numeric(df["10 YR"], errors="coerce")
+    out = df.rename(columns={"Date": "date", "10 YR": "close"})[["date", "close"]]
+    return out.dropna().sort_values("date")
+
+
 def fetch_macro(manual_path=MANUAL):
     manual = _load_yaml(manual_path) if os.path.exists(manual_path) else {}
     items = []
     warnings = []
 
-    # 1) TIPS（FRED，可能超时）
+    # 1) TIPS：优先美国财政部实际收益率曲线，失败再试 FRED
     tips = None
     try:
-        tips = fetch_fred("DFII10", timeout=10)
-        items.append(_item("us10y_tips", "美债实际利率 10Y", "%", tips, "date", "DFII10", "rate", "FRED DFII10"))
+        tips = fetch_treasury_real()
+        items.append(
+            _item("us10y_tips", "美债实际利率 10Y", "%", tips, "date", "close", "rate", "美国财政部实际收益率曲线")
+        )
     except Exception as exc:
-        warnings.append(f"TIPS 未取到：{type(exc).__name__}；可在 macro_manual.yml 手填")
-        items.append(_item("us10y_tips", "美债实际利率 10Y", "%", None, "date", "DFII10", "rate", "FRED DFII10"))
+        warnings.append(f"财政部 TIPS 未取到：{type(exc).__name__}")
+        try:
+            tips = fetch_fred("DFII10", timeout=10)
+            items.append(_item("us10y_tips", "美债实际利率 10Y", "%", tips, "date", "DFII10", "rate", "FRED DFII10"))
+        except Exception as exc2:
+            warnings.append(f"TIPS 未取到：{type(exc2).__name__}；可在 macro_manual.yml 手填")
+            items.append(_item("us10y_tips", "美债实际利率 10Y", "%", None, "date", "close", "rate", "美国财政部实际收益率曲线"))
 
     # 2) 美债 10Y 名义
     try:
