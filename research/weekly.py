@@ -8,7 +8,9 @@
 import argparse
 import os
 
-from .build_pack import DEFAULT_MACRO, DEFAULT_METRICS, build, current_week
+from .build_pack import DEFAULT_CATALYSTS, DEFAULT_CORRELATION, DEFAULT_MACRO, DEFAULT_METRICS, build, current_week
+from .catalysts import run as run_catalysts
+from .correlation import run as run_correlation
 from .fetch_macro import fetch_all as fetch_macro_all
 from .fetch_market import CACHE_DIR, SOURCE_MAP, WATCHLIST, fetch_all as fetch_market_all
 from .ledger_adapter import DEFAULT_BASE, LedgerError
@@ -28,6 +30,8 @@ def main():
     ap.add_argument("--months", type=int, default=60, help="申万月度历史月数")
     ap.add_argument("--metrics", default=DEFAULT_METRICS, help="行情指标 JSON")
     ap.add_argument("--macro", default=DEFAULT_MACRO, help="宏观 JSON")
+    ap.add_argument("--catalysts", default=DEFAULT_CATALYSTS, help="催化 JSON")
+    ap.add_argument("--correlation", default=DEFAULT_CORRELATION, help="相关性 JSON")
     args = ap.parse_args()
 
     week = args.week or current_week()
@@ -48,9 +52,21 @@ def main():
             raise
         except Exception as exc:
             print(f"行情抓取失败，改用已有缓存：{type(exc).__name__}: {exc}")
+        print("计算持仓相关性...")
+        try:
+            run_correlation(args.base)
+        except LedgerError:
+            raise
+        except Exception as exc:
+            print(f"相关性计算失败，改用已有缓存：{type(exc).__name__}: {exc}")
 
     try:
-        path, pack = build(args.base, args.watchlist, out, week, args.metrics, args.macro)
+        run_catalysts()
+    except Exception as exc:
+        print(f"催化登记表校验失败，沿用已有缓存：{type(exc).__name__}: {exc}")
+
+    try:
+        path, pack = build(args.base, args.watchlist, out, week, args.metrics, args.macro, args.catalysts, args.correlation)
     except LedgerError as exc:
         raise SystemExit(f"[台账] {exc}") from exc
     except FileNotFoundError as exc:
@@ -64,6 +80,11 @@ def main():
     print("行情状态：" + "，".join(f"{k} {v}" for k, v in sorted(status.items())))
     macro_ok = sum(1 for m in pack.get("macro", []) if m.get("status") in ("ok", "manual"))
     print(f"宏观：{macro_ok}/{len(pack.get('macro', []))} 个变量可用")
+    cat_ok = sum(1 for c in pack.get("candidates", []) if c.get("catalyst_status") == "ok")
+    cat_total = sum(len(c.get("catalysts", [])) for c in pack.get("candidates", []))
+    print(f"催化：{cat_total} 条，覆盖 {cat_ok} 个方向")
+    corr_ok = sum(1 for c in pack.get("candidates", []) if c.get("max_corr_120d") is not None)
+    print(f"相关性：{corr_ok} 个方向已算")
     print("下一步：用 skill 读数据包写 weekly.md -> 质检 -> 人工决定")
 
 

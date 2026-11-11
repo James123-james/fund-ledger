@@ -1,0 +1,42 @@
+version: 1
+updated: "2026-11-11"
+status: draft
+window_days: 30
+note: "每条催化必须有日期、类型、来源；没有就留空，不要用当天快讯冒充 30 日催化"
+
+# 条目格式：
+# - date: "2026-11-05"        # YYYY-MM-DD
+#   type: "policy"            # policy / data / event
+#   title: "一句话说明"
+#   source: "来源名称"
+#   url: "https://..."
+#   status: "confirmed"       # confirmed / candidate
+#   note: "可选"
+
+directions:
+  hs300:
+    items: []
+  csi_a500:
+    items: []
+  dividend_lowvol:
+    items: []
+  star50:
+    items: []
+  semiconductor:
+    items: []
+  robotics:
+    items: []
+  innovative_drug:
+    items: []
+  chemicals:
+    items: []
+  nonferrous:
+    items: []
+  gold:
+    items: []
+  power:
+    items: []
+  consumer:
+    items: []
+  hk_tech:
+    items: []

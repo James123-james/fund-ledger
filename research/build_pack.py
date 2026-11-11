@@ -19,6 +19,8 @@ from .ledger_adapter import DEFAULT_BASE, LedgerError, snapshot
 
 DEFAULT_METRICS = os.path.join("research", "data", "market", "metrics.json")
 DEFAULT_MACRO = os.path.join("research", "data", "macro", "macro.json")
+DEFAULT_CATALYSTS = os.path.join("research", "data", "catalysts", "catalysts.json")
+DEFAULT_CORRELATION = os.path.join("research", "data", "correlation", "correlation.json")
 
 
 def load_metrics(path=DEFAULT_METRICS):
@@ -29,6 +31,20 @@ def load_metrics(path=DEFAULT_METRICS):
 
 
 def load_macro(path=DEFAULT_MACRO):
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def load_catalysts(path=DEFAULT_CATALYSTS):
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def load_correlation(path=DEFAULT_CORRELATION):
     if not path or not os.path.exists(path):
         return {}
     with open(path, "r", encoding="utf-8") as fh:
@@ -47,11 +63,15 @@ def load_watchlist(path):
     return data
 
 
-def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRICS, macro_path=DEFAULT_MACRO):
+def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRICS, macro_path=DEFAULT_MACRO, catalysts_path=DEFAULT_CATALYSTS, correlation_path=DEFAULT_CORRELATION):
     watchlist = load_watchlist(watchlist_path)
     ledger = snapshot(base)
     metrics = load_metrics(metrics_path)
     macro = load_macro(macro_path)
+    cats = load_catalysts(catalysts_path)
+    cat_dirs = cats.get("directions", {}) if cats else {}
+    corr = load_correlation(correlation_path)
+    corr_dirs = corr.get("directions", {}) if corr else {}
     market = metrics.get("directions", {}) if metrics else {}
     week = week or current_week()
     as_of = ledger.get("as_of") or date.today().isoformat()
@@ -62,6 +82,8 @@ def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRIC
             continue
         did = item.get("id", "")
         m = market.get(did, {})
+        cat = cat_dirs.get(did, {})
+        co = corr_dirs.get(did, {})
         candidates.append(
             {
                 "sector": item.get("name", ""),
@@ -72,7 +94,12 @@ def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRIC
                 "proxy_note": item.get("proxy_note", ""),
                 "metrics": m.get("metrics", {}),
                 "sources": [],
-                "catalysts": [],
+                "catalysts": cat.get("items", []),
+                "catalyst_status": cat.get("status", "none"),
+                "correlation_with_holdings": co.get("holdings", []),
+                "max_corr_120d": co.get("max_corr_120d"),
+                "max_corr_holding": co.get("max_holding"),
+                "overlap": co.get("overlap", None),
                 "risks": [],
                 "overlap_with_holdings": item.get("existing_overlap", ""),
                 "data_status": m.get("status", "pending"),
@@ -89,6 +116,10 @@ def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRIC
         warnings.extend(metrics.get("warnings", []))
     if macro:
         warnings.extend(macro.get("warnings", []))
+    if cats:
+        warnings.extend(cats.get("warnings", []))
+    if corr:
+        warnings.extend(corr.get("warnings", []))
     if watchlist.get("status") != "active":
         warnings.append("观察池仍是 draft，需确认后再用于正式周报")
 
@@ -104,6 +135,8 @@ def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRIC
             "ledger": base,
             "market": "akshare" if metrics else "pending",
             "macro": "mixed" if macro else "pending",
+            "catalysts": "registry" if cats else "pending",
+            "correlation": "proxy" if corr else "pending",
         },
         "watchlist": {
             "status": watchlist.get("status", "draft"),
@@ -162,12 +195,14 @@ def main():
     ap.add_argument("--week", default=None, help="ISO 周，如 2026-W46")
     ap.add_argument("--metrics", default=DEFAULT_METRICS, help="行情指标 JSON")
     ap.add_argument("--macro", default=DEFAULT_MACRO, help="宏观 JSON")
+    ap.add_argument("--catalysts", default=DEFAULT_CATALYSTS, help="催化 JSON")
+    ap.add_argument("--correlation", default=DEFAULT_CORRELATION, help="相关性 JSON")
     args = ap.parse_args()
 
     week = args.week or current_week()
     out = args.out or os.path.join("research", "data", week, "data-pack.json")
     try:
-        path, pack = build(args.base, args.watchlist, out, week, args.metrics, args.macro)
+        path, pack = build(args.base, args.watchlist, out, week, args.metrics, args.macro, args.catalysts, args.correlation)
     except LedgerError as exc:
         raise SystemExit(f"[台账] {exc}") from exc
     except FileNotFoundError as exc:

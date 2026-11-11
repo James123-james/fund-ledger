@@ -1,0 +1,18 @@
+version: 1
+updated: "2026-11-11"
+note: "方向日线代理；etf: 代码 或 index: 新浪指数代码"
+
+proxies:
+  hs300: "etf:510300"
+  csi_a500: "index:sh000510"
+  dividend_lowvol: "etf:563020"
+  star50: "etf:588000"
+  semiconductor: "etf:512480"
+  robotics: "etf:562500"
+  innovative_drug: "etf:159992"
+  chemicals: "etf:516020"
+  nonferrous: "etf:512400"
+  gold: "etf:518880"
+  power: "etf:159611"
+  consumer: "etf:159928"
+  hk_tech: "etf:513180"

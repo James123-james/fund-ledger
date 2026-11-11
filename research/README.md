@@ -1,7 +1,9 @@
 # 半自动双轨周报（research）
 
-当前是 **Milestone 4：A500 补齐 + 宏观部分接入**。
-只读台账、AKShare 行情、5 年估值/价格分位、宏观 4/6、数据包和一页数据版周报都已打通。
+当前是 **Milestone 6：持仓相关性接入完成**。
+只读台账、AKShare 行情、5 年估值/价格分位、宏观 4/6、催化登记表、数据包和一页数据版周报都已打通。
+催化登记表目前是空的；没有 30 日催化，就明确写 0 条。
+13 个方向与现有持仓的 60/120 日相关性已算，>0.7 自动标记为高重叠。
 
 ## 已实现
 
@@ -10,6 +12,8 @@
 - 生成带行情/宏观指标的 `data-pack.json`
 - 一键脚本 `python3 -m research.weekly`（默认先抓宏观 + 行情）
 - 宏观：美债 10Y 名义、布油、黄金、DR007；TIPS/DXY 可手填
+- 催化登记表：日期/类型/来源校验，空表明确写 0 条
+- 相关性：方向代理 vs 持仓净值，60/120 日，>0.7 降级
 - AKShare 覆盖检查：`python3 -m research.check_source`
 - 周报 skill 草稿：`research/skill/weekly-report.md`
 - 第一份数据版周报：`reports/2026-W46/weekly.md`
@@ -24,6 +28,8 @@ python3 -m research.ledger_adapter          # 打印台账快照
 python3 -m research.weekly --week 2026-W46 # 抓行情 + 生成数据包
 python3 -m research.weekly --no-fetch      # 用已有行情缓存，快速重跑
 python3 -m research.check_source            # 检查 AKShare 覆盖
+python3 -m research.catalysts               # 校验催化登记表
+python3 -m research.correlation             # 计算与持仓相关性
 ```
 
 输出：
@@ -42,6 +48,8 @@ research/
 ├── ledger_adapter.py        # 只读台账
 ├── fetch_market.py          # AKShare 行情与指标
 ├── fetch_macro.py           # 宏观变量
+├── catalysts.py             # 催化登记表校验
+├── correlation.py           # 方向与持仓相关性
 ├── build_pack.py            # 数据包
 ├── check_source.py          # 数据源覆盖检查
 ├── weekly.py                # 一键入口
@@ -50,6 +58,8 @@ research/
     ├── watchlist.draft.yml  # 13 个方向草稿
     ├── source_map.draft.yml # 方向→数据源映射
     ├── macro_manual.yml     # TIPS/DXY 手填
+    ├── catalysts.draft.yml  # 30 日催化登记表
+    ├── correlation_proxies.yml # 方向日线代理
     └── settings.example.yml # 台账地址、路径、报告上限
 ```
 
@@ -94,7 +104,8 @@ research/
 - 4 个方向（中证A500/科创50/黄金/港股科技）只有价格分位
 - 没有完全缺失的方向
 - 宏观 4/6：美债 10Y 名义、布油、黄金、DR007；TIPS 和美元指数缺失
-- 30 日催化、持仓相关性还没接入
+- 催化登记表 0 条；不用当天快讯冒充 30 日催化
+- 相关性 13/13 已算；9 个方向 >0.7 高重叠
 
 所以第一份周报明确写“本周无合格方向，不操作”，没有硬凑方向。
 
