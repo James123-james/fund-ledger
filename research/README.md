@@ -30,6 +30,7 @@ python3 -m research.weekly --no-fetch      # 用已有行情缓存，快速重�
 python3 -m research.check_source            # 检查 AKShare 覆盖
 python3 -m research.catalysts               # 校验催化登记表
 python3 -m research.correlation             # 计算与持仓相关性
+python3 -m research.review                  # 4 周复盘汇总
 ```
 
 输出：
@@ -50,6 +51,7 @@ research/
 ├── fetch_macro.py           # 宏观变量
 ├── catalysts.py             # 催化登记表校验
 ├── correlation.py           # 方向与持仓相关性
+├── review.py                # 4 周复盘汇总
 ├── build_pack.py            # 数据包
 ├── check_source.py          # 数据源覆盖检查
 ├── weekly.py                # 一键入口
@@ -124,6 +126,13 @@ cp research/skill/weekly-report.md ~/.dsh/skills/fund-ledger-weekly-report/SKILL
 - 相关性 13/13 已算；9 个方向 >0.7 高重叠
 - 本周观察：半导体（价值轨）、机器人（趋势轨）；不操作
 - 评分模型未校准，所以暂不写分数
+
+## 4 周复盘怎么看
+
+- 每周五填 `reports/run-log.csv` 一行（耗时、数据问题、行为、清晰度）
+- 11/25、12/11 更新 `reports/tracking.csv`
+- 12/13 跑 `python3 -m research.review`，输出运行次数、耗时、触发、行为计数
+- 详细字段见 `reports/review-guide.md`
 
 ## 下一步
 
