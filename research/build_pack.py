@@ -17,6 +17,15 @@ import yaml
 
 from .ledger_adapter import DEFAULT_BASE, LedgerError, snapshot
 
+DEFAULT_METRICS = os.path.join("research", "data", "market", "metrics.json")
+
+
+def load_metrics(path=DEFAULT_METRICS):
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
 
 def current_week(day=None):
     day = day or date.today()
@@ -30,9 +39,11 @@ def load_watchlist(path):
     return data
 
 
-def build(base, watchlist_path, out_path, week=None):
+def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRICS):
     watchlist = load_watchlist(watchlist_path)
     ledger = snapshot(base)
+    metrics = load_metrics(metrics_path)
+    market = metrics.get("directions", {}) if metrics else {}
     week = week or current_week()
     as_of = ledger.get("as_of") or date.today().isoformat()
 
@@ -40,24 +51,33 @@ def build(base, watchlist_path, out_path, week=None):
     for item in watchlist.get("directions", []):
         if not item.get("enabled", True):
             continue
+        did = item.get("id", "")
+        m = market.get(did, {})
         candidates.append(
             {
                 "sector": item.get("name", ""),
-                "id": item.get("id", ""),
+                "id": did,
                 "kind": item.get("kind", ""),
                 "track": "pending",
                 "proxy": item.get("proxy", ""),
                 "proxy_note": item.get("proxy_note", ""),
-                "metrics": {},
+                "metrics": m.get("metrics", {}),
                 "sources": [],
                 "catalysts": [],
                 "risks": [],
                 "overlap_with_holdings": item.get("existing_overlap", ""),
-                "data_status": "pending",
+                "data_status": m.get("status", "pending"),
+                "data_as_of": m.get("as_of", ""),
+                "source": m.get("source", ""),
+                "valuation_mode": m.get("valuation_mode", ""),
             }
         )
 
-    warnings = ["行情数据尚未接入：candidates.metrics 为空，暂不能评分"]
+    warnings = []
+    if not metrics:
+        warnings.append("行情数据尚未接入：candidates.metrics 为空，暂不能评分")
+    else:
+        warnings.extend(metrics.get("warnings", []))
     if watchlist.get("status") != "active":
         warnings.append("观察池仍是 draft，需确认后再用于正式周报")
 
@@ -71,7 +91,7 @@ def build(base, watchlist_path, out_path, week=None):
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "source": {
             "ledger": base,
-            "market": "pending",
+            "market": "akshare" if metrics else "pending",
         },
         "watchlist": {
             "status": watchlist.get("status", "draft"),
@@ -95,7 +115,16 @@ def build(base, watchlist_path, out_path, week=None):
             "summary": ledger.get("summary", {}),
         },
         "data_quality": {
-            "missing": ["行情指标未接入"],
+            "missing": [
+                f"{c['sector']}：{c['data_status']}"
+                for c in candidates
+                if c["data_status"] == "missing"
+            ],
+            "partial": [
+                f"{c['sector']}：{c['data_status']}"
+                for c in candidates
+                if c["data_status"] in ("price_only", "partial")
+            ],
             "stale": [],
             "warnings": warnings,
         },
@@ -119,12 +148,13 @@ def main():
     )
     ap.add_argument("--out", default=None, help="输出路径")
     ap.add_argument("--week", default=None, help="ISO 周，如 2026-W46")
+    ap.add_argument("--metrics", default=DEFAULT_METRICS, help="行情指标 JSON")
     args = ap.parse_args()
 
     week = args.week or current_week()
     out = args.out or os.path.join("research", "data", week, "data-pack.json")
     try:
-        path, pack = build(args.base, args.watchlist, out, week)
+        path, pack = build(args.base, args.watchlist, out, week, args.metrics)
     except LedgerError as exc:
         raise SystemExit(f"[台账] {exc}") from exc
     except FileNotFoundError as exc:
