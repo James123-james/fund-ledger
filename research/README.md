@@ -1,14 +1,15 @@
 # 半自动双轨周报（research）
 
-当前是 **Milestone 3：数据层 MVP 跑通**。
-只读台账、AKShare 行情、5 年估值/价格分位、数据包和一页数据版周报都已打通。
+当前是 **Milestone 4：A500 补齐 + 宏观部分接入**。
+只读台账、AKShare 行情、5 年估值/价格分位、宏观 4/6、数据包和一页数据版周报都已打通。
 
 ## 已实现
 
 - 只读台账适配器：持仓、权重、汇总、流水/计划数量
 - 观察池 YAML：当前是 13 个方向的草稿
-- 生成带行情指标的 `data-pack.json`
-- 一键脚本 `python3 -m research.weekly`（默认先抓行情）
+- 生成带行情/宏观指标的 `data-pack.json`
+- 一键脚本 `python3 -m research.weekly`（默认先抓宏观 + 行情）
+- 宏观：美债 10Y 名义、布油、黄金、DR007；TIPS/DXY 可手填
 - AKShare 覆盖检查：`python3 -m research.check_source`
 - 周报 skill 草稿：`research/skill/weekly-report.md`
 - 第一份数据版周报：`reports/2026-W46/weekly.md`
@@ -40,6 +41,7 @@ research/
 ├── __init__.py
 ├── ledger_adapter.py        # 只读台账
 ├── fetch_market.py          # AKShare 行情与指标
+├── fetch_macro.py           # 宏观变量
 ├── build_pack.py            # 数据包
 ├── check_source.py          # 数据源覆盖检查
 ├── weekly.py                # 一键入口
@@ -47,6 +49,7 @@ research/
 └── config/
     ├── watchlist.draft.yml  # 13 个方向草稿
     ├── source_map.draft.yml # 方向→数据源映射
+    ├── macro_manual.yml     # TIPS/DXY 手填
     └── settings.example.yml # 台账地址、路径、报告上限
 ```
 
@@ -90,7 +93,8 @@ research/
 - 9 个方向有完整 PE/PB + 价格分位
 - 4 个方向（中证A500/科创50/黄金/港股科技）只有价格分位
 - 没有完全缺失的方向
-- 宏观、30 日催化、持仓相关性还没接入
+- 宏观 4/6：美债 10Y 名义、布油、黄金、DR007；TIPS 和美元指数缺失
+- 30 日催化、持仓相关性还没接入
 
 所以第一份周报明确写“本周无合格方向，不操作”，没有硬凑方向。
 

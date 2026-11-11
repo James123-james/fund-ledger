@@ -18,9 +18,17 @@ import yaml
 from .ledger_adapter import DEFAULT_BASE, LedgerError, snapshot
 
 DEFAULT_METRICS = os.path.join("research", "data", "market", "metrics.json")
+DEFAULT_MACRO = os.path.join("research", "data", "macro", "macro.json")
 
 
 def load_metrics(path=DEFAULT_METRICS):
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def load_macro(path=DEFAULT_MACRO):
     if not path or not os.path.exists(path):
         return {}
     with open(path, "r", encoding="utf-8") as fh:
@@ -39,10 +47,11 @@ def load_watchlist(path):
     return data
 
 
-def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRICS):
+def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRICS, macro_path=DEFAULT_MACRO):
     watchlist = load_watchlist(watchlist_path)
     ledger = snapshot(base)
     metrics = load_metrics(metrics_path)
+    macro = load_macro(macro_path)
     market = metrics.get("directions", {}) if metrics else {}
     week = week or current_week()
     as_of = ledger.get("as_of") or date.today().isoformat()
@@ -78,6 +87,8 @@ def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRIC
         warnings.append("行情数据尚未接入：candidates.metrics 为空，暂不能评分")
     else:
         warnings.extend(metrics.get("warnings", []))
+    if macro:
+        warnings.extend(macro.get("warnings", []))
     if watchlist.get("status") != "active":
         warnings.append("观察池仍是 draft，需确认后再用于正式周报")
 
@@ -92,6 +103,7 @@ def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRIC
         "source": {
             "ledger": base,
             "market": "akshare" if metrics else "pending",
+            "macro": "mixed" if macro else "pending",
         },
         "watchlist": {
             "status": watchlist.get("status", "draft"),
@@ -105,7 +117,7 @@ def build(base, watchlist_path, out_path, week=None, metrics_path=DEFAULT_METRIC
             "changed": None,
             "notes": [],
         },
-        "macro": [],
+        "macro": macro.get("items", []) if macro else [],
         "candidates": candidates,
         "holdings": holdings,
         "ledger": {
@@ -149,12 +161,13 @@ def main():
     ap.add_argument("--out", default=None, help="输出路径")
     ap.add_argument("--week", default=None, help="ISO 周，如 2026-W46")
     ap.add_argument("--metrics", default=DEFAULT_METRICS, help="行情指标 JSON")
+    ap.add_argument("--macro", default=DEFAULT_MACRO, help="宏观 JSON")
     args = ap.parse_args()
 
     week = args.week or current_week()
     out = args.out or os.path.join("research", "data", week, "data-pack.json")
     try:
-        path, pack = build(args.base, args.watchlist, out, week, args.metrics)
+        path, pack = build(args.base, args.watchlist, out, week, args.metrics, args.macro)
     except LedgerError as exc:
         raise SystemExit(f"[台账] {exc}") from exc
     except FileNotFoundError as exc:

@@ -1,0 +1,12 @@
+# 手动补充/覆盖宏观变量；value 填 null 表示用自动数据
+us10y_tips:
+  value: null
+  as_of: ""
+  source: "manual"
+  note: "FRED DFII10 取不到时手填；单位 %"
+
+dxy:
+  value: null
+  as_of: ""
+  source: "manual"
+  note: "美元指数；自动源待定，可手填"
