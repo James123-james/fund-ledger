@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f6b57">
+  <title>修复账本页面</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0; min-height: 100dvh; display: grid; place-items: center;
+      background: #f3f6f4; color: #1d2a24;
+      font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+    }
+    .card {
+      width: min(88vw, 360px); padding: 28px 22px; border-radius: 18px;
+      background: #fff; box-shadow: 0 12px 34px rgba(20, 60, 45, .10); text-align: center;
+    }
+    .mark {
+      width: 54px; height: 54px; margin: 0 auto 14px; border-radius: 16px;
+      display: grid; place-items: center; background: #e3f1eb; color: #0f6b57;
+      font-size: 26px; font-weight: 700;
+    }
+    h1 { margin: 0 0 8px; font-size: 19px; }
+    p { margin: 0 0 18px; color: #5c6b64; font-size: 14px; }
+    a {
+      display: inline-block; padding: 10px 18px; border-radius: 10px;
+      background: #0f6b57; color: #fff; text-decoration: none; font-weight: 600;
+    }
+    .sub { margin-top: 14px; font-size: 12px; color: #8a968f; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="mark">¥</div>
+    <h1>正在修复页面</h1>
+    <p id="msg">清理旧的 Service Worker 和缓存，然后重新打开账本…</p>
+    <a id="open" href="/">手动打开账本</a>
+    <div class="sub">不会删除账本数据</div>
+  </main>
+  <script>
+    (async () => {
+      const msg = document.getElementById('msg');
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister()));
+        }
+        if (window.caches) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k)));
+        }
+        msg.textContent = '已清理，正在打开账本…';
+        setTimeout(() => location.replace('/?v=5'), 500);
+      } catch (e) {
+        msg.textContent = '清理失败，点下面手动打开；还不行就换浏览器打开。';
+      }
+    })();
+  </script>
+</body>
+</html>
