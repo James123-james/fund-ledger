@@ -2536,26 +2536,22 @@ async function boot() {
       }
     }
     state.meta = meta;
-    // 基金列表、总览、模板互不依赖，并发请求；服务端有 30 秒读缓存
-    const [, tpl] = await Promise.all([
-      loadFunds(),
-      loadOverview(),
-      api('/api/templates').catch(() => ({ items: [] })),
-    ]);
-    state.templates = tpl.items || [];
-    state.curTpl = state.templates[0] ? state.templates[0].id : null;
+    await loadFunds();
+    await loadOverview();
+    try {
+      const t = await api('/api/templates');
+      state.templates = t.items || [];
+      state.curTpl = state.templates[0] ? state.templates[0].id : null;
+    } catch { /* 忽略 */ }
     prepareExport();
     bindEvents();
     autoRunSipPlans();
     maybeOpenNewTxn();
   } catch (e) {
-    if (e instanceof TypeError) {
-      // fetch 直接失败：本地服务没起来（常见于从桌面图标打开、后台进程被系统回收）
-      $('#boot-error').hidden = false;
-    } else {
-      document.body.insertAdjacentHTML('afterbegin',
-        `<div style="padding:16px;background:#c0392b;color:#fff;font-size:13px">启动失败：${esc(e.message)}</div>`);
-    }
+    const detail = $('#boot-error-detail');
+    if (detail) detail.textContent = `${e.name || 'Error'}: ${e.message || e}`;
+    $('#boot-error').hidden = false;
+    console.error('boot failed', e);
   } finally {
     loading(false);
   }
