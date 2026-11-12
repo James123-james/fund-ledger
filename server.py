@@ -27,6 +27,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from app import analytics, backup, behavior, db, dividend, engine, exporter, quotes, sip  # noqa: E402
+from app.cache import CACHE  # noqa: E402
 
 # 手机端 PWA 需要的类型；不注册的话 .webmanifest 会以 application/octet-stream 发出去
 mimetypes.add_type("application/manifest+json", ".webmanifest")
@@ -840,9 +841,22 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
 
+        # 写操作后清空读缓存；本地单用户，直接全清最简单也最安全
+        if method in ("POST", "PUT", "PATCH", "DELETE"):
+            CACHE.clear()
+
         # 静态资源
         if method == "GET" and (path == "/" or path.startswith("/web/") or not path.startswith("/api")):
             return self._serve_static(path)
+
+        cache_key = None
+        if method == "GET" and path.startswith("/api/") and path not in ("/api/export", "/api/backup"):
+            pairs = [(k, v) for k in sorted(query) for v in query[k]]
+            cache_key = path + (("?" + urllib.parse.urlencode(pairs)) if pairs else "")
+            hit = CACHE.get(cache_key)
+            if hit:
+                raw, headers = hit
+                return self._send_raw(200, raw, headers, extra={"X-Cache": "HIT"})
 
         body = {}
         if method in ("POST", "PUT", "PATCH"):
@@ -877,19 +891,25 @@ class Handler(BaseHTTPRequestHandler):
         if isinstance(payload, bytes):
             self._send_raw(200, payload, headers)
         else:
-            self._send_json(status, payload, headers)
+            raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            out_headers = {"Content-Type": "application/json; charset=utf-8", **(headers or {})}
+            if cache_key and status == 200:
+                CACHE.set(cache_key, raw, out_headers)
+            self._send_raw(status, raw, out_headers, extra={"X-Cache": "MISS"})
 
     # ---- 响应
     def _send_json(self, status, payload, headers=None):
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send_raw(status, raw, {"Content-Type": "application/json; charset=utf-8", **(headers or {})})
 
-    def _send_raw(self, status, raw, headers=None):
+    def _send_raw(self, status, raw, headers=None, cache_control="no-store", extra=None):
         self.send_response(status)
         for k, v in (headers or {}).items():
             self.send_header(k, v)
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.end_headers()
         if raw:
             self.wfile.write(raw)
@@ -908,7 +928,11 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         with open(target, "rb") as fh:
             raw = fh.read()
-        self._send_raw(200, raw, {"Content-Type": ctype})
+        if rel in ("index.html", "sw.js") or ctype.startswith("text/") or rel.endswith((".js", ".css")):
+            cache_control = "no-cache"
+        else:
+            cache_control = "public, max-age=3600"
+        self._send_raw(200, raw, {"Content-Type": ctype}, cache_control=cache_control)
 
 
 def lan_ip():

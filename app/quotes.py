@@ -15,7 +15,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -31,13 +31,13 @@ class QuoteError(Exception):
     pass
 
 
-def _get(url, headers=None, retry=RETRY):
+def _get(url, headers=None, retry=RETRY, timeout=TIMEOUT):
     """带重试的 GET，返回解码后的文本。"""
     last = None
     for attempt in range(retry):
         try:
             req = urllib.request.Request(url, headers=headers or HEADERS)
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
             for enc in ("utf-8", "gbk", "gb18030"):
                 try:
@@ -296,20 +296,21 @@ INDEX_PRESETS = [
 ]
 
 
-def fetch_index(secid):
-    """抓取指数全量日线。返回 (name, [{date, close}])。
+def fetch_index(secid, beg="0"):
+    """抓取指数日线。返回 (name, [{date, close}])。
 
-    用东方财富的 K 线接口，一次请求拿全部历史，不需要分页。
+    beg=0 时拉全量；增量同步传最近日期，东方财富只返回之后的数据。
     fqt=1 表示前复权，指数本身无复权概念，取 1 保证与行情软件一致。
     """
+    beg = beg or "0"
     url = (
         "https://push2his.eastmoney.com/api/qt/stock/kline/get"
         f"?secid={secid}&fields1=f1,f58&fields2=f51,f53&klt=101&fqt=1"
-        "&beg=0&end=20500101"
+        f"&beg={beg}&end=20500101"
     )
     headers = dict(HEADERS)
     headers["Referer"] = "https://quote.eastmoney.com/"
-    text = _get(url, headers=headers)
+    text = _get(url, headers=headers, retry=1, timeout=8)
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -349,8 +350,19 @@ def save_index(conn, secid, name, rows):
 
 
 def sync_index(conn, secid, name=None):
-    """同步指数。name 为空时用接口返回的名称，再退回 secid。"""
-    api_name, rows = fetch_index(secid)
+    """同步指数：有历史时只补最近 7 天，首次才拉全量。"""
+    last = conn.execute(
+        "SELECT MAX(date) AS d FROM benchmark_nav WHERE secid = ?", (secid,)
+    ).fetchone()
+    if last and last["d"] == date.today().isoformat():
+        return {"secid": secid, "name": name or secid, "rows": 0, "cached": True}
+    beg = "0"
+    if last and last["d"]:
+        try:
+            beg = (date.fromisoformat(last["d"]) - timedelta(days=7)).strftime("%Y%m%d")
+        except ValueError:
+            beg = "0"
+    api_name, rows = fetch_index(secid, beg=beg)
     final = name or (api_name if api_name and not api_name.startswith(tuple("0123456789")) else secid)
     n = save_index(conn, secid, final, rows)
     return {"secid": secid, "name": final, "rows": n}

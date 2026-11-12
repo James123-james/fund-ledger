@@ -2392,14 +2392,24 @@ function bindEvents() {
     const presets = state.benchPresets || [];
     if (!presets.length) { toast('没有可用的预设指数', true); return; }
     const okList = [], bad = [];
+    const btn = $('#btn-sync-bench');
+    const oldText = btn.textContent;
+    btn.disabled = true;
     loading(true);
-    for (const p of presets) {
-      try {
-        await post('/api/benchmarks/sync', { secid: p.secid, name: p.name });
-        okList.push(p.name);
-      } catch (e) { bad.push(p.name); }
+    try {
+      for (let i = 0; i < presets.length; i++) {
+        const p = presets[i];
+        btn.textContent = `更新中 ${i + 1}/${presets.length}`;
+        try {
+          await post('/api/benchmarks/sync', { secid: p.secid, name: p.name });
+          okList.push(p.name);
+        } catch (e) { bad.push(p.name); }
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldText;
+      loading(false);
     }
-    loading(false);
     toast(bad.length ? `已更新 ${okList.length} 个，失败 ${bad.length} 个` : `已更新 ${okList.length} 个基准`);
     state.benchmarks = null;
     await loadBenchList();
@@ -2515,14 +2525,14 @@ async function boot() {
   try {
     loading(true);
     state.meta = await api('/api/meta');
-    await loadFunds();
-    await loadOverview();
-    // 预取模板，供导出与配置页使用
-    try {
-      const t = await api('/api/templates');
-      state.templates = t.items || [];
-      state.curTpl = state.templates[0] ? state.templates[0].id : null;
-    } catch { /* 忽略 */ }
+    // 基金列表、总览、模板互不依赖，并发请求；服务端有 30 秒读缓存
+    const [, tpl] = await Promise.all([
+      loadFunds(),
+      loadOverview(),
+      api('/api/templates').catch(() => ({ items: [] })),
+    ]);
+    state.templates = tpl.items || [];
+    state.curTpl = state.templates[0] ? state.templates[0].id : null;
     prepareExport();
     bindEvents();
     autoRunSipPlans();
