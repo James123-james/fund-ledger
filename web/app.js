@@ -2524,7 +2524,18 @@ function maybeOpenNewTxn() {
 async function boot() {
   try {
     loading(true);
-    state.meta = await api('/api/meta');
+    // 引擎刚重启时服务可能还在拉起，先重试几次再报“账本没启动”
+    let meta = null;
+    for (let i = 0; i < 5; i++) {
+      try {
+        meta = await api('/api/meta');
+        break;
+      } catch (e) {
+        if (!(e instanceof TypeError) || i === 4) throw e;
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+    state.meta = meta;
     // 基金列表、总览、模板互不依赖，并发请求；服务端有 30 秒读缓存
     const [, tpl] = await Promise.all([
       loadFunds(),
