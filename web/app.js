@@ -25,6 +25,7 @@ const state = {
   dividends: null,
   months: [],
   monthly: null,
+  syncAt: {},
 };
 
 /* ---------------- 格式化 ---------------- */
@@ -2194,16 +2195,63 @@ function bindEvents() {
   $('#fab-new-txn').addEventListener('click', () => openTxnModal(null));
   $('#btn-sync').addEventListener('click', async () => {
     if (!state.funds.length) { toast('基金库是空的，先添加基金', true); return; }
+    const today = (state.meta && state.meta.today) || '';
+    const todayMs = today ? new Date(today + 'T00:00:00').getTime() : 0;
+    const pending = state.funds.filter((f) => {
+      // 基金库里既没持仓也没流水的空基金，不必每次更新
+      if (!f.holding && !f.txn_count) return false;
+      // 刚同步过的基金 10 分钟内不重复打接口（QDII/部分基金净值只到 T-1）
+      if (Date.now() - (state.syncAt[f.code] || 0) < 10 * 60 * 1000) return false;
+      if (!f.nav_date) return true;
+      if (f.nav_date === today) return false;
+      // 货币基金净值通常 T-1 才更新；每次全量重拉 4000+ 条不值得，顶栏更新先跳过
+      if (f.is_money && todayMs) {
+        const d = new Date(f.nav_date + 'T00:00:00').getTime();
+        if ((todayMs - d) / 86400000 <= 1) return false;
+      }
+      return true;
+    });
+    const skipped = state.funds.length - pending.length;
+    if (!pending.length) {
+      toast(`全部 ${state.funds.length} 只已是今天净值`);
+      return;
+    }
+    const btn = $('#btn-sync');
+    const oldText = btn.textContent;
+    btn.disabled = true;
+    const queue = [...pending];
+    const ok = [], bad = [];
+    let started = 0;
+    const worker = async () => {
+      while (queue.length) {
+        const f = queue.shift();
+        const n = ++started;
+        btn.textContent = `更新中 ${n}/${pending.length}`;
+        try {
+          await post(`/api/funds/${f.code}/sync`, {});
+          state.syncAt[f.code] = Date.now();
+          ok.push(f.code);
+        } catch (e) {
+          bad.push({ code: f.code, name: f.name, error: e.message });
+        }
+      }
+    };
     try {
-      loading(true);
-      const res = await post('/api/funds/sync-all', {});
-      const ok = (res.synced || []).length;
-      const bad = (res.failed || []).length;
-      toast(bad ? `更新完成：成功 ${ok} 只，失败 ${bad} 只` : `已更新 ${ok} 只基金的净值`);
-      if (bad) console.warn('同步失败：', res.failed);
-      await loadOverview();
-      if ($('#view-settings').classList.contains('active')) loadFunds();
-    } catch (e) { toast(e.message, true); } finally { loading(false); }
+      // 2 路并发：SQLite 写会排队，但网络等待可以重叠
+      await Promise.all([worker(), worker()]);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
+    const parts = [];
+    if (ok.length) parts.push(`更新 ${ok.length} 只`);
+    if (skipped) parts.push(`跳过 ${skipped} 只已是今天`);
+    if (bad.length) parts.push(`失败 ${bad.length} 只`);
+    toast(parts.join('，') || '没有需要更新的基金', bad.length > 0);
+    if (bad.length) console.warn('同步失败：', bad);
+    // 必须刷新基金列表里的 nav_date，否则下一次会重复更新同一批
+    await loadFunds();
+    await loadOverview();
   });
 
   // 流水筛选

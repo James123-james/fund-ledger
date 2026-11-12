@@ -6,7 +6,7 @@
  * 改完 web/ 下的文件后，把 VERSION 加 1，旧缓存会在下次打开时清掉。
  */
 
-const VERSION = 'fund-ledger-v5';
+const VERSION = 'fund-ledger-v6';
 const SHELL = [
   '/',
   '/web/style.css',
